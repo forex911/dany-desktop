@@ -1,27 +1,37 @@
+# ─── Node ───
 node_modules/
+package-lock.json
+
+# ─── Electron Builder Output ───
 dist/
-build/
-*.exe
-*.AppImage
-*.dmg
 
-# Python
+# ─── Runtime Binaries (auto-managed, too large for git) ───
+backend/bin/
+
+# ─── PyInstaller Artifacts ───
+*.spec
+build/download_video/
+build/fetch_video_info/
+
+# ─── Python Cache ───
 __pycache__/
-*.py[cod]
-*$py.class
+*.pyc
+*.pyo
+
+# ─── Environment & Secrets ───
 .env
-venv/
-env/
-ENV/
+*.env
+backend/cookies/
 
-# App Data
+# ─── Logs ───
 logs/
-binaries/ffmpeg*
-binaries/yt-dlp*
-cookies/
-downloads/
-history.json
+*.log
 
-# OS Files
+# ─── OS Junk ───
 .DS_Store
 Thumbs.db
+desktop.ini
+
+# ─── IDE ───
+.vscode/
+.idea/

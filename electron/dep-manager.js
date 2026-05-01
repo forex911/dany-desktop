@@ -13,9 +13,13 @@ const http = require("http");
 const FFMPEG_DOWNLOAD_URL = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip";
 
 function getBinariesDir() {
-    // In production (packaged), use app's resources; in dev, use project root
-    const devPath = path.join(__dirname, "..", "binaries");
-    return devPath;
+    // In production (packaged), extraResources copies backend/bin → resources/bin
+    // In dev, use backend/bin directly
+    const isPacked = require("electron").app?.isPackaged ?? false;
+    if (isPacked) {
+        return path.join(process.resourcesPath, "bin");
+    }
+    return path.join(__dirname, "..", "backend", "bin");
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -66,21 +70,21 @@ function checkYtDlpModule(pythonCmd = "python") {
 // Check: FFmpeg binaries in managed folder?
 // ═══════════════════════════════════════════════════════════
 function checkFfmpeg(binariesDir) {
-    const ffmpegDir = path.join(binariesDir, "ffmpeg");
-    const ffmpegPath = path.join(ffmpegDir, "ffmpeg.exe");
-    const ffprobePath = path.join(ffmpegDir, "ffprobe.exe");
+    // Flat structure: ffmpeg.exe lives directly in backend/bin/
+    const ffmpegPath = path.join(binariesDir, "ffmpeg.exe");
+    const ffprobePath = path.join(binariesDir, "ffprobe.exe");
 
     const ffmpegExists = fs.existsSync(ffmpegPath);
     const ffprobeExists = fs.existsSync(ffprobePath);
 
     if (ffmpegExists && ffprobeExists) {
-        return { ok: true, path: ffmpegDir };
+        return { ok: true, path: binariesDir };
     }
 
     return {
         ok: false,
         error: `Missing: ${!ffmpegExists ? "ffmpeg.exe " : ""}${!ffprobeExists ? "ffprobe.exe" : ""}`.trim(),
-        path: ffmpegDir
+        path: binariesDir
     };
 }
 
@@ -114,13 +118,15 @@ function installYtDlp(pythonCmd = "python", statusCallback = null) {
 // ═══════════════════════════════════════════════════════════
 function downloadFfmpeg(binariesDir, statusCallback = null) {
     return new Promise(async (resolve) => {
-        const ffmpegDir = path.join(binariesDir, "ffmpeg");
-        fs.mkdirSync(ffmpegDir, { recursive: true });
+        // Flat structure: extract directly into binariesDir (backend/bin/)
+        fs.mkdirSync(binariesDir, { recursive: true });
 
         if (statusCallback) statusCallback("Downloading FFmpeg...");
         console.log("[DEP] Downloading FFmpeg...");
 
-        const zipPath = path.join(binariesDir, "ffmpeg-temp.zip");
+        const tempDir = path.join(binariesDir, "_ffmpeg_temp");
+        fs.mkdirSync(tempDir, { recursive: true });
+        const zipPath = path.join(tempDir, "ffmpeg-temp.zip");
 
         try {
             await downloadFile(FFMPEG_DOWNLOAD_URL, zipPath, (progress) => {
@@ -130,31 +136,21 @@ function downloadFfmpeg(binariesDir, statusCallback = null) {
             if (statusCallback) statusCallback("Extracting FFmpeg...");
             console.log("[DEP] Extracting FFmpeg...");
 
-            // Use PowerShell to extract (Windows built-in)
-            await extractZip(zipPath, binariesDir);
+            // Extract to temp dir to avoid polluting backend/bin/
+            await extractZip(zipPath, tempDir);
 
-            // Find the extracted ffmpeg.exe and ffprobe.exe and move to ffmpegDir
-            const extracted = findFilesRecursive(binariesDir, ["ffmpeg.exe", "ffprobe.exe"]);
+            // Find ffmpeg.exe and ffprobe.exe in the extracted tree and copy to flat bin/
+            const extracted = findFilesRecursive(tempDir, ["ffmpeg.exe", "ffprobe.exe"]);
 
             for (const file of extracted) {
-                const dest = path.join(ffmpegDir, path.basename(file));
-                if (file !== dest) {
-                    fs.copyFileSync(file, dest);
-                    console.log(`[DEP] Copied ${path.basename(file)} → ${ffmpegDir}`);
-                }
+                const dest = path.join(binariesDir, path.basename(file));
+                fs.copyFileSync(file, dest);
+                console.log(`[DEP] Copied ${path.basename(file)} → ${binariesDir}`);
             }
 
-            // Cleanup temp files
+            // Cleanup temp directory entirely
             try {
-                fs.unlinkSync(zipPath);
-                // Remove extracted folder (the zip extracts to a subfolder)
-                const entries = fs.readdirSync(binariesDir);
-                for (const entry of entries) {
-                    const fullPath = path.join(binariesDir, entry);
-                    if (fs.statSync(fullPath).isDirectory() && entry.startsWith("ffmpeg-") && entry !== "ffmpeg") {
-                        fs.rmSync(fullPath, { recursive: true, force: true });
-                    }
-                }
+                fs.rmSync(tempDir, { recursive: true, force: true });
             } catch (cleanupErr) {
                 console.warn("[DEP] Cleanup warning:", cleanupErr.message);
             }
@@ -163,8 +159,8 @@ function downloadFfmpeg(binariesDir, statusCallback = null) {
             const check = checkFfmpeg(binariesDir);
             if (check.ok) {
                 if (statusCallback) statusCallback("FFmpeg installed ✓");
-                console.log("[DEP] FFmpeg installed successfully at", ffmpegDir);
-                resolve({ ok: true, path: ffmpegDir });
+                console.log("[DEP] FFmpeg installed successfully at", binariesDir);
+                resolve({ ok: true, path: binariesDir });
             } else {
                 resolve({ ok: false, error: "FFmpeg extraction failed — files not found after extract" });
             }

@@ -10,7 +10,7 @@ const depManager = require("./dep-manager");
 // Paths
 // ═══════════════════════════════════════════════════════════
 const binariesDir = depManager.getBinariesDir();
-const ffmpegDir = path.join(binariesDir, "ffmpeg");
+const ffmpegDir = binariesDir; // ffmpeg.exe lives flat in backend/bin/
 
 // Platform-specific download subfolder mapping
 const PLATFORM_FOLDERS = {
