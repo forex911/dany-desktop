@@ -1,0 +1,27 @@
+node_modules/
+dist/
+build/
+*.exe
+*.AppImage
+*.dmg
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.env
+venv/
+env/
+ENV/
+
+# App Data
+logs/
+binaries/ffmpeg*
+binaries/yt-dlp*
+cookies/
+downloads/
+history.json
+
+# OS Files
+.DS_Store
+Thumbs.db

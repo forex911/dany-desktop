@@ -1,0 +1,41 @@
+{
+  "name": "danyv1",
+  "version": "1.0.0",
+  "description": "Dany Downloader - YouTube Video Downloader Desktop App",
+  "main": "electron/main.js",
+  "author": "SIVAL",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron .",
+    "build": "electron-builder",
+    "dist": "electron-builder --win"
+  },
+  "devDependencies": {
+    "electron": "^37.2.0",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.dany.downloader",
+    "productName": "Dany Downloader",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "electron/**/*",
+      "frontend/**/*",
+      "backend/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "frontend/assets/icons/app.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  }
+}
