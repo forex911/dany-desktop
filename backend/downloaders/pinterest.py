@@ -100,6 +100,14 @@ def download_pinterest(url, download_folder, progress_callback=None, format_id="
         ),
         "progress_hooks": hooks
     })
+    
+    if format_id == "bestaudio/best":
+        ydl_opts["postprocessors"] = [{
+            "key": "FFmpegExtractAudio",
+            "preferredcodec": "mp3",
+            "preferredquality": "320"
+        }]
+
     if extra_postprocessor_hooks:
         ydl_opts["postprocessor_hooks"] = extra_postprocessor_hooks
 

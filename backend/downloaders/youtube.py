@@ -107,17 +107,17 @@ def try_extract(url, force_web_only=False):
     # Try browser cookies first, then file
     # ═══════════════════════════════════════════════════════════
     print("\n[YT-DLP] 🎬 Stage 2: COOKIE FALLBACK")
-    try:
-        test_opts = opts_base.copy()
-        test_opts["cookiesfrombrowser"] = ("chrome",)
-
-        with yt_dlp.YoutubeDL(test_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-        fmt_count = len(info.get("formats", []))
-        print(f"[YT-DLP] ✅ Stage 2 Success (Browser Cookies)! Formats found: {fmt_count}")
-        return info, "cookie_fallback", True, None
-    except Exception as e:
-        print(f"[YT-DLP Error] ❌ Stage 2 Browser Cookies Failed: {e}")
+    for browser in ["chrome", "edge", "firefox", "brave", "safari", "opera"]:
+        try:
+            test_opts = opts_base.copy()
+            test_opts["cookiesfrombrowser"] = (browser,)
+            with yt_dlp.YoutubeDL(test_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+            fmt_count = len(info.get("formats", []))
+            print(f"[YT-DLP] ✅ Stage 2 Success (Browser Cookies: {browser})! Formats found: {fmt_count}")
+            return info, f"cookie_fallback_{browser}", True, None
+        except Exception as e:
+            print(f"[YT-DLP Error] ❌ Stage 2 {browser} Cookies Failed: {e}")
         
     cookie_path = get_cookie_path()
     if cookie_path:
@@ -390,6 +390,13 @@ def download_youtube(url, folder, progress_callback=None, format_id=None, task_i
     if not format_id:
         format_id = "bv*[height<=720]+ba/b/best"
 
+    # Pre-flight FFmpeg Check
+    ffmpeg_dir = os.environ.get("DANY_FFMPEG_DIR")
+    if ffmpeg_dir:
+        ffmpeg_exe = os.path.join(ffmpeg_dir, "ffmpeg.exe" if os.name == "nt" else "ffmpeg")
+        if not os.path.exists(ffmpeg_exe):
+            return {"success": False, "error": "FFmpeg executable is missing. It may have been quarantined by your Antivirus."}
+
     # Ensure download folder exists
     os.makedirs(folder, exist_ok=True)
 
@@ -478,12 +485,13 @@ def download_youtube(url, folder, progress_callback=None, format_id=None, task_i
     # ═══════════════════════════════════════════════════
     # STAGE 2: COOKIE FALLBACK (Browser Chrome + File)
     # ═══════════════════════════════════════════════════
-    opts_s2_browser = opts_base.copy()
-    if "cookiefile" in opts_s2_browser:
-        del opts_s2_browser["cookiefile"]
-    opts_s2_browser["cookiesfrombrowser"] = ("chrome",)
-    res = try_download(opts_s2_browser, "Stage 2: COOKIE FALLBACK (Browser)", used_cookie=True)
-    if res: return res
+    for browser in ["chrome", "edge", "firefox", "brave", "safari", "opera"]:
+        opts_s2_browser = opts_base.copy()
+        if "cookiefile" in opts_s2_browser:
+            del opts_s2_browser["cookiefile"]
+        opts_s2_browser["cookiesfrombrowser"] = (browser,)
+        res = try_download(opts_s2_browser, f"Stage 2: COOKIE FALLBACK ({browser})", used_cookie=True)
+        if res: return res
 
     cookie_path = get_cookie_path()
     if cookie_path:

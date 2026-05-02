@@ -3,14 +3,24 @@
 const { app, BrowserWindow, ipcMain, shell } = require("electron");
 const path = require("path");
 const fs = require("fs");
-const { spawn } = require("child_process");
+const { spawn, exec, execSync } = require("child_process");
 const depManager = require("./dep-manager");
+const { autoUpdater } = require("electron-updater");
 
 // ═══════════════════════════════════════════════════════════
 // Paths
 // ═══════════════════════════════════════════════════════════
 const binariesDir = depManager.getBinariesDir();
-const ffmpegDir = binariesDir; // ffmpeg.exe lives flat in backend/bin/
+
+function resolveFfmpegDir() {
+    if (app.isPackaged) {
+        const appDataDir = depManager.getAppDataBinariesDir();
+        if (fs.existsSync(path.join(appDataDir, "ffmpeg.exe"))) {
+            return appDataDir;
+        }
+    }
+    return binariesDir;
+}
 
 // Platform-specific download subfolder mapping
 const PLATFORM_FOLDERS = {
@@ -55,15 +65,12 @@ function loadHistory() {
 }
 
 function saveHistory(history) {
-    try {
-        fs.writeFileSync(historyPath, JSON.stringify(history, null, 2), "utf8");
-    } catch (e) {
-        console.error("[History] Failed to save:", e.message);
-    }
+    fs.promises.writeFile(historyPath, JSON.stringify(history, null, 2), "utf8")
+        .catch(e => console.error("[History] Failed to save asynchronously:", e.message));
 }
 
 // Active download process reference (for cancel support)
-let activeDownloadProcess = null;
+const activeDownloads = new Map();
 
 function createWindow() {
     const win = new BrowserWindow({
@@ -101,60 +108,72 @@ function createWindow() {
             console.error("[DEP] Failed to send dep-check-result:", e.message);
         }
     });
+
+    // ─── Security: Prevent Drag & Drop Navigation ───
+    win.webContents.on("will-navigate", (event, url) => {
+        event.preventDefault();
+        console.log(`[Security] Blocked navigation to: ${url}`);
+    });
+    
+    win.webContents.on("will-prevent-unload", (event) => {
+        event.preventDefault();
+    });
 }
 
 // ═══════════════════════════════════════════════════════════
-// IPC: fetch-video-info — Command-based Python backend call
+// IPC: fetch-video-info — Command-based backend call
 // ═══════════════════════════════════════════════════════════
 ipcMain.handle("fetch-video-info", async (event, url) => {
     console.log("[IPC] ────────────────────────────────────────");
     console.log("[IPC] Received 'fetch-video-info' from renderer");
     console.log("[IPC] URL:", url);
 
-    const backendDir = path.join(__dirname, "..", "backend");
-    const scriptPath = path.join(backendDir, "fetch_video_info.py");
+    const executablePath = path.join(binariesDir, "fetch_video_info.exe");
+    const isPacked = app.isPackaged;
 
-    console.log("[IPC] Backend directory:", backendDir);
-    console.log("[IPC] Script path:", scriptPath);
-    console.log("[IPC] Spawning: python", scriptPath, url);
+    console.log("[IPC] Binaries directory:", binariesDir);
+    console.log("[IPC] Executable path:", executablePath);
+    console.log("[IPC] File exists:", fs.existsSync(executablePath));
+    console.log("[IPC] Packaged mode:", isPacked);
+    console.log("[IPC] Spawning:", executablePath, url);
 
     return new Promise((resolve) => {
-        const pythonProcess = spawn("python", [scriptPath, url], {
-            cwd: backendDir,
-            env: { ...process.env, DANY_FFMPEG_DIR: ffmpegDir },
+        const backendProcess = spawn(executablePath, [url], {
+            cwd: binariesDir,
+            env: { ...process.env, DANY_FFMPEG_DIR: resolveFfmpegDir() },
             windowsHide: true
         });
 
         let stdoutData = "";
         let stderrData = "";
 
-        pythonProcess.stdout.on("data", (chunk) => {
+        backendProcess.stdout.on("data", (chunk) => {
             const text = chunk.toString();
             stdoutData += text;
-            console.log("[PYTHON stdout]", text.trim());
+            console.log("[BACKEND stdout]", text.trim());
         });
 
-        pythonProcess.stderr.on("data", (chunk) => {
+        backendProcess.stderr.on("data", (chunk) => {
             const text = chunk.toString();
             stderrData += text;
-            console.log("[PYTHON stderr]", text.trim());
+            console.log("[BACKEND stderr]", text.trim());
         });
 
-        pythonProcess.on("error", (err) => {
-            console.error("[IPC] ❌ Failed to start Python process:", err.message);
+        backendProcess.on("error", (err) => {
+            console.error("[IPC] ❌ Failed to start backend process:", err.message);
             resolve({
                 success: false,
-                error: "Failed to start Python: " + err.message
+                error: "Failed to start backend executable: " + err.message
             });
         });
 
-        pythonProcess.on("close", (code) => {
-            console.log("[IPC] Python process exited with code:", code);
+        backendProcess.on("close", (code) => {
+            console.log("[IPC] Backend process exited with code:", code);
             console.log("[IPC] stdout length:", stdoutData.length);
             console.log("[IPC] stderr length:", stderrData.length);
 
             if (code !== 0 && !stdoutData.trim()) {
-                console.error("[IPC] ❌ Python failed completely. stderr:", stderrData);
+                console.error("[IPC] ❌ Backend failed completely. stderr:", stderrData);
                 resolve({
                     success: false,
                     error: stderrData || "Backend process failed with code " + code
@@ -162,8 +181,18 @@ ipcMain.handle("fetch-video-info", async (event, url) => {
                 return;
             }
 
+            const dataStr = stdoutData.trim();
+            if (dataStr.startsWith("<") || !dataStr.includes("{")) {
+                console.error("[IPC] ❌ Backend returned HTML or non-JSON");
+                resolve({
+                    success: false,
+                    error: "Network Error: Proxy interception or offline. Raw output: " + dataStr.substring(0, 50)
+                });
+                return;
+            }
+
             try {
-                const result = JSON.parse(stdoutData.trim());
+                const result = JSON.parse(dataStr);
                 console.log("[IPC] ✅ JSON parsed successfully");
                 console.log("[IPC] Response success:", result.success);
                 if (result.title) console.log("[IPC] Title:", result.title);
@@ -181,48 +210,50 @@ ipcMain.handle("fetch-video-info", async (event, url) => {
 });
 
 // ═══════════════════════════════════════════════════════════
-// IPC: download-video — Command-based Python download call
+// IPC: download-video — Command-based backend download call
 // ═══════════════════════════════════════════════════════════
-ipcMain.handle("download-video", async (event, { url, formatId }) => {
+ipcMain.handle("download-video", async (event, { url, formatId, taskId }) => {
     console.log("[IPC] ────────────────────────────────────────");
     console.log("[IPC] Received 'download-video' from renderer");
     console.log("[IPC] URL:", url);
     console.log("[IPC] Format:", formatId);
 
-    const backendDir = path.join(__dirname, "..", "backend");
-    const scriptPath = path.join(backendDir, "download_video.py");
+    const executablePath = path.join(binariesDir, "download_video.exe");
+    const isPacked = app.isPackaged;
     const platform = detectPlatform(url);
     const downloadFolder = getDownloadFolder(platform);
-    const taskId = Date.now().toString();
+    if (!taskId) taskId = Date.now().toString();
 
-    console.log("[IPC] Backend directory:", backendDir);
-    console.log("[IPC] Script path:", scriptPath);
+    console.log("[IPC] Binaries directory:", binariesDir);
+    console.log("[IPC] Executable path:", executablePath);
+    console.log("[IPC] File exists:", fs.existsSync(executablePath));
+    console.log("[IPC] Packaged mode:", isPacked);
     console.log("[IPC] Platform:", platform);
     console.log("[IPC] Download folder:", downloadFolder);
     console.log("[IPC] Task ID:", taskId);
-    console.log("[IPC] Spawning: python", scriptPath, url, downloadFolder, formatId, taskId);
+    console.log("[IPC] Spawning:", executablePath, url, downloadFolder, formatId, taskId);
 
     return new Promise((resolve) => {
-        const pythonProcess = spawn("python", [scriptPath, url, downloadFolder, formatId, taskId], {
-            cwd: backendDir,
-            env: { ...process.env, DANY_FFMPEG_DIR: ffmpegDir },
+        const backendProcess = spawn(executablePath, [url, downloadFolder, formatId, taskId], {
+            cwd: binariesDir,
+            env: { ...process.env, DANY_FFMPEG_DIR: resolveFfmpegDir() },
             windowsHide: true
         });
 
         // Store reference for cancel support
-        activeDownloadProcess = pythonProcess;
+        activeDownloads.set(taskId, backendProcess);
 
         let stdoutData = "";
 
-        pythonProcess.stdout.on("data", (chunk) => {
+        backendProcess.stdout.on("data", (chunk) => {
             const text = chunk.toString();
             stdoutData += text;
-            console.log("[PYTHON DL stdout]", text.trim());
+            console.log("[BACKEND DL stdout]", text.trim());
         });
 
-        pythonProcess.stderr.on("data", (chunk) => {
+        backendProcess.stderr.on("data", (chunk) => {
             const text = chunk.toString();
-            console.log("[PYTHON DL stderr]", text.trim());
+            console.log("[BACKEND DL stderr]", text.trim());
 
             // Parse stderr lines for progress data
             const lines = text.split("\n");
@@ -234,10 +265,12 @@ ipcMain.handle("download-video", async (event, { url, formatId }) => {
                     try {
                         const jsonStr = trimmed.substring("DLPROGRESS:".length);
                         const data = JSON.parse(jsonStr);
-                        event.sender.send("download-progress-detail", data);
-                        // Also send basic percent for backward compat
-                        if (typeof data.percent === "number") {
-                            event.sender.send("download-progress", data.percent);
+                        if (!event.sender.isDestroyed()) {
+                            event.sender.send("download-progress-detail", data);
+                            // Also send basic percent for backward compat
+                            if (typeof data.percent === "number") {
+                                event.sender.send("download-progress", data.percent);
+                            }
                         }
                     } catch (e) {
                         // Ignore malformed DLPROGRESS
@@ -249,28 +282,26 @@ ipcMain.handle("download-video", async (event, { url, formatId }) => {
                 if (trimmed.startsWith("PROGRESS:")) {
                     const percent = parseFloat(trimmed.replace("PROGRESS:", ""));
                     if (!isNaN(percent)) {
-                        try {
+                        if (!event.sender.isDestroyed()) {
                             event.sender.send("download-progress", percent);
-                        } catch (e) {
-                            // Renderer may have been destroyed
                         }
                     }
                 }
             }
         });
 
-        pythonProcess.on("error", (err) => {
-            activeDownloadProcess = null;
-            console.error("[IPC] ❌ Failed to start Python download:", err.message);
+        backendProcess.on("error", (err) => {
+            activeDownloads.delete(taskId);
+            console.error("[IPC] ❌ Failed to start backend download:", err.message);
             resolve({
                 success: false,
-                error: "Failed to start Python: " + err.message
+                error: "Failed to start backend executable: " + err.message
             });
         });
 
-        pythonProcess.on("close", (code) => {
-            activeDownloadProcess = null;
-            console.log("[IPC] Python download exited with code:", code);
+        backendProcess.on("close", (code) => {
+            activeDownloads.delete(taskId);
+            console.log("[IPC] Backend download exited with code:", code);
             console.log("[IPC] stdout length:", stdoutData.length);
 
             if (code !== 0 && !stdoutData.trim()) {
@@ -282,22 +313,35 @@ ipcMain.handle("download-video", async (event, { url, formatId }) => {
                 return;
             }
 
+            const dataStr = stdoutData.trim();
+            if (dataStr.startsWith("<") || !dataStr.includes("{")) {
+                console.error("[IPC] ❌ Backend returned HTML or non-JSON");
+                resolve({
+                    success: false,
+                    error: "Network Error: Proxy interception or offline. Raw output: " + dataStr.substring(0, 50)
+                });
+                return;
+            }
+
             try {
-                const result = JSON.parse(stdoutData.trim());
-                console.log("[IPC] ✅ Download JSON parsed. Success:", result.success);
-                if (result.filename) console.log("[IPC] Filename:", result.filename);
-                if (result.title) console.log("[IPC] Title:", result.title);
-                
-                // Add download folder path to result for history
-                result._downloadFolder = downloadFolder;
-                
-                resolve(result);
+                const result = JSON.parse(dataStr);
+                if (result.success === true && result.filename) {
+                    console.log("[IPC] ✅ Download JSON parsed. Success:", result.success);
+                    console.log("[IPC] Filename:", result.filename);
+                    if (result.title) console.log("[IPC] Title:", result.title);
+                    
+                    // Add download folder path to result for history
+                    result._downloadFolder = downloadFolder;
+                    resolve(result);
+                } else {
+                    throw new Error(result.error || "Missing success flag or filename in response");
+                }
             } catch (err) {
-                console.error("[IPC] ❌ Download JSON parse failed:", err.message);
+                console.error("[IPC] ❌ Download validation/parse failed:", err.message);
                 console.error("[IPC] Raw stdout:", stdoutData);
                 resolve({
                     success: false,
-                    error: "Invalid JSON from download backend: " + err.message
+                    error: "Invalid or failed response from download backend: " + err.message
                 });
             }
         });
@@ -307,19 +351,24 @@ ipcMain.handle("download-video", async (event, { url, formatId }) => {
 // ═══════════════════════════════════════════════════════════
 // IPC: cancel-download — Kill active download process
 // ═══════════════════════════════════════════════════════════
-ipcMain.handle("cancel-download", async () => {
-    if (activeDownloadProcess) {
-        console.log("[IPC] 🛑 Killing active download process...");
+ipcMain.handle("cancel-download", async (event, taskId) => {
+    const proc = activeDownloads.get(taskId);
+    if (proc) {
+        console.log(`[IPC] 🛑 Killing process tree for task ${taskId} (PID: ${proc.pid})...`);
         try {
-            activeDownloadProcess.kill();
-            activeDownloadProcess = null;
+            if (process.platform === "win32") {
+                exec(`taskkill /pid ${proc.pid} /t /f`);
+            } else {
+                proc.kill();
+            }
+            activeDownloads.delete(taskId);
             return { success: true };
         } catch (e) {
             console.error("[IPC] Failed to kill process:", e.message);
             return { success: false, error: e.message };
         }
     }
-    return { success: false, error: "No active download" };
+    return { success: false, error: "No active download for that task" };
 });
 
 // ═══════════════════════════════════════════════════════════
@@ -354,8 +403,18 @@ ipcMain.handle("clear-download-history", async () => {
 // IPC: File System — Open file in Explorer
 // ═══════════════════════════════════════════════════════════
 ipcMain.handle("open-file-location", async (event, filePath) => {
-    if (filePath && fs.existsSync(filePath)) {
-        shell.showItemInFolder(filePath);
+    if (!filePath) return { success: false, error: "No path provided" };
+    
+    const downloadsPath = app.getPath("downloads");
+    const resolvedPath = path.resolve(filePath);
+    
+    if (!resolvedPath.startsWith(downloadsPath)) {
+        console.error(`[Security] Blocked path traversal attempt: ${resolvedPath}`);
+        return { success: false, error: "Invalid path: Outside of downloads directory" };
+    }
+
+    if (fs.existsSync(resolvedPath)) {
+        shell.showItemInFolder(resolvedPath);
         return { success: true };
     }
     return { success: false, error: "File not found" };
@@ -412,6 +471,48 @@ ipcMain.handle("open-external-url", (event, url) => {
     }
 });
 
+// ═══════════════════════════════════════════════════════════
+// Auto-Updater Configuration
+// ═══════════════════════════════════════════════════════════
+autoUpdater.autoDownload = true;
+autoUpdater.autoInstallOnAppQuit = true;
+
+autoUpdater.on("update-available", (info) => {
+    console.log("[Updater] Update available:", info.version);
+    const wins = BrowserWindow.getAllWindows();
+    if (wins.length > 0 && !wins[0].webContents.isDestroyed()) {
+        wins[0].webContents.send("update-available", info);
+    }
+});
+
+autoUpdater.on("download-progress", (progressObj) => {
+    const wins = BrowserWindow.getAllWindows();
+    if (wins.length > 0 && !wins[0].webContents.isDestroyed()) {
+        wins[0].webContents.send("update-progress", progressObj);
+    }
+});
+
+autoUpdater.on("update-downloaded", (info) => {
+    console.log("[Updater] Update downloaded:", info.version);
+    const wins = BrowserWindow.getAllWindows();
+    if (wins.length > 0 && !wins[0].webContents.isDestroyed()) {
+        wins[0].webContents.send("update-downloaded", info);
+    }
+});
+
+autoUpdater.on("error", (err) => {
+    console.error("[Updater] Error:", err.message);
+    // Clear cache to prevent infinite update loop on corrupted download
+    const cachePath = path.join(app.getPath("userData"), "..", app.getName() + "-updater");
+    fs.promises.rm(cachePath, { recursive: true, force: true })
+        .then(() => console.log("[Updater] Cleared corrupted update cache"))
+        .catch(() => {});
+});
+
+ipcMain.handle("install-update", () => {
+    autoUpdater.quitAndInstall();
+});
+
 app.whenReady().then(() => {
     createWindow();
 
@@ -420,10 +521,32 @@ app.whenReady().then(() => {
             createWindow();
         }
     });
+
+    if (app.isPackaged) {
+        autoUpdater.checkForUpdatesAndNotify().catch(err => {
+            console.error("[Updater] Failed to check for updates:", err);
+        });
+    }
 });
 
 app.on("window-all-closed", () => {
     if (process.platform !== "darwin") {
         app.quit();
+    }
+});
+
+app.on("before-quit", () => {
+    console.log("[LIFECYCLE] before-quit triggered. Cleaning up active processes...");
+    for (const pid of activeDownloads.keys()) {
+        try {
+            const processRef = activeDownloads.get(pid);
+            if (processRef && processRef.pid) {
+                const killCmd = `taskkill /pid ${processRef.pid} /T /F`;
+                execSync(killCmd, { windowsHide: true });
+                console.log(`[LIFECYCLE] Force killed zombie process PID: ${processRef.pid}`);
+            }
+        } catch (e) {
+            console.error(`[LIFECYCLE] Failed to kill process ${pid}:`, e.message);
+        }
     }
 });

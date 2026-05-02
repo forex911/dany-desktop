@@ -26,7 +26,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     },
 
     // ── Cancel ──
-    cancelDownload: () => ipcRenderer.invoke("cancel-download"),
+    cancelDownload: (taskId) => ipcRenderer.invoke("cancel-download", taskId),
 
     // ── History ──
     getDownloadHistory: () => ipcRenderer.invoke("get-download-history"),
@@ -50,5 +50,17 @@ contextBridge.exposeInMainWorld("electronAPI", {
 
     // ── About / Support ──
     getAppVersion: () => ipcRenderer.invoke("get-app-version"),
-    openExternalUrl: (url) => ipcRenderer.invoke("open-external-url", url)
+    openExternalUrl: (url) => ipcRenderer.invoke("open-external-url", url),
+
+    // ── Auto-Updater ──
+    onUpdateAvailable: (callback) => {
+        ipcRenderer.on("update-available", (_event, info) => callback(info));
+    },
+    onUpdateProgress: (callback) => {
+        ipcRenderer.on("update-progress", (_event, info) => callback(info));
+    },
+    onUpdateDownloaded: (callback) => {
+        ipcRenderer.on("update-downloaded", (_event, info) => callback(info));
+    },
+    installUpdate: () => ipcRenderer.invoke("install-update")
 });

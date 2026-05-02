@@ -22,95 +22,55 @@ function getBinariesDir() {
     return path.join(__dirname, "..", "backend", "bin");
 }
 
-// ═══════════════════════════════════════════════════════════
-// Check: Python available?
-// ═══════════════════════════════════════════════════════════
-function checkPython() {
-    return new Promise((resolve) => {
-        exec("python --version", { windowsHide: true, timeout: 10000 }, (err, stdout, stderr) => {
-            if (err) {
-                // Try python3 as fallback
-                exec("python3 --version", { windowsHide: true, timeout: 10000 }, (err2, stdout2, stderr2) => {
-                    if (err2) {
-                        resolve({ ok: false, version: null, error: "Python not found" });
-                    } else {
-                        const ver = (stdout2 || stderr2 || "").trim();
-                        resolve({ ok: true, version: ver, cmd: "python3" });
-                    }
-                });
-            } else {
-                const ver = (stdout || stderr || "").trim();
-                resolve({ ok: true, version: ver, cmd: "python" });
-            }
-        });
-    });
+function getAppDataBinariesDir() {
+    // Return %APPDATA%\dany-downloader\bin for writeable recovery
+    return path.join(require("electron").app.getPath("userData"), "bin");
 }
 
 // ═══════════════════════════════════════════════════════════
-// Check: yt-dlp Python module installed?
+// Check: Backend Executables in managed folder?
 // ═══════════════════════════════════════════════════════════
-function checkYtDlpModule(pythonCmd = "python") {
-    return new Promise((resolve) => {
-        exec(
-            `${pythonCmd} -c "import yt_dlp; print(yt_dlp.version.__version__)"`,
-            { windowsHide: true, timeout: 15000 },
-            (err, stdout) => {
-                if (err) {
-                    resolve({ ok: false, version: null, error: "yt-dlp module not installed" });
-                } else {
-                    const ver = (stdout || "").trim();
-                    resolve({ ok: true, version: ver });
-                }
-            }
-        );
-    });
-}
-
-// ═══════════════════════════════════════════════════════════
-// Check: FFmpeg binaries in managed folder?
-// ═══════════════════════════════════════════════════════════
-function checkFfmpeg(binariesDir) {
-    // Flat structure: ffmpeg.exe lives directly in backend/bin/
+function checkBackend(binariesDir) {
+    const fetchPath = path.join(binariesDir, "fetch_video_info.exe");
+    const downloadPath = path.join(binariesDir, "download_video.exe");
     const ffmpegPath = path.join(binariesDir, "ffmpeg.exe");
     const ffprobePath = path.join(binariesDir, "ffprobe.exe");
 
+    const fetchExists = fs.existsSync(fetchPath);
+    const downloadExists = fs.existsSync(downloadPath);
     const ffmpegExists = fs.existsSync(ffmpegPath);
     const ffprobeExists = fs.existsSync(ffprobePath);
 
-    if (ffmpegExists && ffprobeExists) {
+    let missing = [];
+    if (!fetchExists) missing.push("fetch_video_info.exe");
+    if (!downloadExists) missing.push("download_video.exe");
+    
+    // Check AppData fallback for FFmpeg if missing in primary
+    let ffmpegResolved = ffmpegExists;
+    let ffprobeResolved = ffprobeExists;
+    
+    if (!ffmpegExists || !ffprobeExists) {
+        try {
+            const appDataDir = getAppDataBinariesDir();
+            if (fs.existsSync(path.join(appDataDir, "ffmpeg.exe")) && fs.existsSync(path.join(appDataDir, "ffprobe.exe"))) {
+                ffmpegResolved = true;
+                ffprobeResolved = true;
+            }
+        } catch(e) {}
+    }
+
+    if (!ffmpegResolved) missing.push("ffmpeg.exe");
+    if (!ffprobeResolved) missing.push("ffprobe.exe");
+
+    if (fetchExists && downloadExists && ffmpegResolved && ffprobeResolved) {
         return { ok: true, path: binariesDir };
     }
 
     return {
         ok: false,
-        error: `Missing: ${!ffmpegExists ? "ffmpeg.exe " : ""}${!ffprobeExists ? "ffprobe.exe" : ""}`.trim(),
+        error: `Missing: ${missing.join(", ")}`,
         path: binariesDir
     };
-}
-
-// ═══════════════════════════════════════════════════════════
-// Install: yt-dlp via pip
-// ═══════════════════════════════════════════════════════════
-function installYtDlp(pythonCmd = "python", statusCallback = null) {
-    return new Promise((resolve) => {
-        if (statusCallback) statusCallback("Installing yt-dlp...");
-        console.log("[DEP] Installing yt-dlp via pip...");
-
-        exec(
-            `${pythonCmd} -m pip install --upgrade yt-dlp`,
-            { windowsHide: true, timeout: 120000 },
-            (err, stdout, stderr) => {
-                if (err) {
-                    console.error("[DEP] yt-dlp install failed:", stderr || err.message);
-                    resolve({ ok: false, error: stderr || err.message });
-                } else {
-                    console.log("[DEP] yt-dlp installed successfully");
-                    if (statusCallback) statusCallback("yt-dlp installed ✓");
-                    resolve({ ok: true });
-                }
-            }
-        );
-    });
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -156,8 +116,8 @@ function downloadFfmpeg(binariesDir, statusCallback = null) {
             }
 
             // Verify
-            const check = checkFfmpeg(binariesDir);
-            if (check.ok) {
+            const check = checkBackend(binariesDir);
+            if (check.ok || (fs.existsSync(path.join(binariesDir, "ffmpeg.exe")) && fs.existsSync(path.join(binariesDir, "ffprobe.exe")))) {
                 if (statusCallback) statusCallback("FFmpeg installed ✓");
                 console.log("[DEP] FFmpeg installed successfully at", binariesDir);
                 resolve({ ok: true, path: binariesDir });
@@ -233,7 +193,7 @@ function downloadFile(url, destPath, progressCallback = null, maxRedirects = 5) 
 function extractZip(zipPath, destDir) {
     return new Promise((resolve, reject) => {
         const cmd = `powershell -NoProfile -Command "Expand-Archive -Path '${zipPath.replace(/'/g, "''")}' -DestinationPath '${destDir.replace(/'/g, "''")}' -Force"`;
-        exec(cmd, { windowsHide: true, timeout: 120000 }, (err, stdout, stderr) => {
+        exec(cmd, { windowsHide: true, timeout: 300000 }, (err, stdout, stderr) => {
             if (err) {
                 reject(new Error(`ZIP extraction failed: ${stderr || err.message}`));
             } else {
@@ -277,33 +237,20 @@ async function runFullCheck(binariesDir = null) {
     console.log("[DEP] Binaries dir:", binariesDir);
 
     const result = {
-        python: { ok: false, version: null },
-        ytdlp: { ok: false, version: null },
-        ffmpeg: { ok: false, path: null },
+        backend: { ok: false, path: null },
+        ffmpeg: { ok: false, path: null }, // for frontend compatibility
+        python: { ok: true, version: "Bundled" }, // mock for frontend compatibility
+        ytdlp: { ok: true, version: "Bundled" }, // mock for frontend compatibility
         allOk: false
     };
 
-    // 1. Python
-    const pyCheck = await checkPython();
-    result.python = pyCheck;
-    console.log(`[DEP] Python: ${pyCheck.ok ? "✅ " + pyCheck.version : "❌ " + pyCheck.error}`);
+    const backendCheck = checkBackend(binariesDir);
+    result.backend = backendCheck;
+    result.ffmpeg = backendCheck; // they share the same folder
 
-    if (!pyCheck.ok) {
-        console.log("[DEP] ❌ Cannot proceed without Python");
-        return result;
-    }
+    console.log(`[DEP] Backend Executables: ${backendCheck.ok ? "✅ " + backendCheck.path : "❌ " + backendCheck.error}`);
 
-    // 2. yt-dlp module
-    const ytCheck = await checkYtDlpModule(pyCheck.cmd);
-    result.ytdlp = ytCheck;
-    console.log(`[DEP] yt-dlp: ${ytCheck.ok ? "✅ v" + ytCheck.version : "❌ " + ytCheck.error}`);
-
-    // 3. FFmpeg
-    const ffCheck = checkFfmpeg(binariesDir);
-    result.ffmpeg = ffCheck;
-    console.log(`[DEP] FFmpeg: ${ffCheck.ok ? "✅ " + ffCheck.path : "❌ " + ffCheck.error}`);
-
-    result.allOk = result.python.ok && result.ytdlp.ok && result.ffmpeg.ok;
+    result.allOk = result.backend.ok;
     console.log(`[DEP] All OK: ${result.allOk ? "✅" : "❌"}`);
     console.log("[DEP] ════════════════════════════════════════");
 
@@ -316,36 +263,33 @@ async function runFullCheck(binariesDir = null) {
 async function installMissing(checkResult, binariesDir = null, statusCallback = null) {
     if (!binariesDir) binariesDir = getBinariesDir();
 
-    const results = { ytdlp: null, ffmpeg: null };
+    const results = { ffmpeg: null };
 
-    if (!checkResult.python.ok) {
-        return { ok: false, error: "Python is not installed. Please install Python 3.10+ from python.org first.", results };
+    const fetchPath = path.join(binariesDir, "fetch_video_info.exe");
+    const downloadPath = path.join(binariesDir, "download_video.exe");
+    if (!fs.existsSync(fetchPath) || !fs.existsSync(downloadPath)) {
+         return { ok: false, error: "Antivirus blocked core executables (fetch_video_info.exe or download_video.exe missing). Please restore them from your antivirus quarantine.", results };
     }
 
-    // Install yt-dlp if missing
-    if (!checkResult.ytdlp.ok) {
-        results.ytdlp = await installYtDlp(checkResult.python.cmd, statusCallback);
-    } else {
-        results.ytdlp = { ok: true, skipped: true };
-    }
-
-    // Install FFmpeg if missing
-    if (!checkResult.ffmpeg.ok) {
-        results.ffmpeg = await downloadFfmpeg(binariesDir, statusCallback);
+    const ffmpegPath = path.join(binariesDir, "ffmpeg.exe");
+    if (!fs.existsSync(ffmpegPath)) {
+        // ALWAYS extract to AppData in production to avoid EPERM on C:\Program Files
+        const isPacked = require("electron").app?.isPackaged ?? false;
+        const targetDir = isPacked ? getAppDataBinariesDir() : binariesDir;
+        
+        results.ffmpeg = await downloadFfmpeg(targetDir, statusCallback);
     } else {
         results.ffmpeg = { ok: true, skipped: true };
     }
 
-    const allOk = (results.ytdlp?.ok ?? false) && (results.ffmpeg?.ok ?? false);
+    const allOk = results.ffmpeg?.ok ?? false;
     return { ok: allOk, results };
 }
 
 module.exports = {
     getBinariesDir,
-    checkPython,
-    checkYtDlpModule,
-    checkFfmpeg,
-    installYtDlp,
+    getAppDataBinariesDir,
+    checkBackend,
     downloadFfmpeg,
     runFullCheck,
     installMissing

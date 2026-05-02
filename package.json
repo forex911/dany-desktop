@@ -1,6 +1,6 @@
 {
   "name": "dany-downloader",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Dany Downloader — Premium desktop media downloader",
   "main": "electron/main.js",
   "author": "FOREX911",
@@ -16,13 +16,19 @@
   "build": {
     "appId": "com.dany.downloader",
     "productName": "Dany Downloader",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "FOREX911",
+        "repo": "dany-desktop"
+      }
+    ],
     "directories": {
       "output": "dist"
     },
     "files": [
       "electron/**/*",
       "frontend/**/*",
-      "backend/**/*",
       "!backend/bin/**",
       "package.json"
     ],
@@ -40,7 +46,11 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "createStartMenuShortcut": true
+      "createStartMenuShortcut": true,
+      "deleteAppDataOnUninstall": true
     }
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.3"
   }
 }

@@ -55,11 +55,20 @@ def fetch_instagram_info(url):
                 info = ydl.extract_info(url, download=False)
         except Exception as e1:
             print(f"[Instagram] Public extraction failed: {e1}")
-            print("[Instagram] Retrying with Chrome cookies...")
+            print("[Instagram] Retrying with browser cookies...")
             # Stage 2: Retry with browser cookies (for private/login-required posts)
-            ydl_opts["cookiesfrombrowser"] = ("chrome",)
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=False)
+            success = False
+            for browser in ["chrome", "edge", "firefox", "brave", "safari", "opera"]:
+                try:
+                    ydl_opts["cookiesfrombrowser"] = (browser,)
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                        info = ydl.extract_info(url, download=False)
+                    success = True
+                    break
+                except Exception as e2:
+                    print(f"[Instagram] {browser} extraction failed: {e2}")
+            if not success:
+                raise Exception("All browser cookie fallbacks failed")
 
         entries = _extract_entries(info)
         is_carousel = len(entries) > 1
@@ -137,6 +146,12 @@ def download_instagram(url, download_folder, progress_callback=None, format_id="
     if not format_id:
         format_id = "bestvideo+bestaudio/best"
 
+    ffmpeg_dir = os.environ.get("DANY_FFMPEG_DIR")
+    if ffmpeg_dir:
+        ffmpeg_exe = os.path.join(ffmpeg_dir, "ffmpeg.exe" if os.name == "nt" else "ffmpeg")
+        if not os.path.exists(ffmpeg_exe):
+            return {"success": False, "error": "FFmpeg executable is missing. It may have been quarantined by your Antivirus."}
+
     os.makedirs(download_folder, exist_ok=True)
 
     def progress_hook(d):
@@ -161,6 +176,16 @@ def download_instagram(url, download_folder, progress_callback=None, format_id="
         "progress_hooks": hooks,
         "extractor_args": {"instagram": {"skip_dash_manifest": True}}
     }
+    
+    if format_id == "bestaudio/best":
+        if "merge_output_format" in ydl_opts:
+            del ydl_opts["merge_output_format"]
+        ydl_opts["postprocessors"] = [{
+            "key": "FFmpegExtractAudio",
+            "preferredcodec": "mp3",
+            "preferredquality": "320"
+        }]
+
     if extra_postprocessor_hooks:
         ydl_opts["postprocessor_hooks"] = extra_postprocessor_hooks
 
@@ -208,10 +233,10 @@ def download_instagram(url, download_folder, progress_callback=None, format_id="
             except Exception as e:
                 last_error = str(e)
                 print(f"[Instagram] ❌ Attempt {attempt+1} failed: {e}")
-                # On first failure, add browser cookies for retry
                 if attempt == 0 and "cookiesfrombrowser" not in ydl_opts:
-                    print("[Instagram] Adding Chrome cookies for retry...")
-                    ydl_opts["cookiesfrombrowser"] = ("chrome",)
+                    # Pick a browser sequentially based on retries, or just pick edge/chrome
+                    print("[Instagram] Adding browser cookies for retry...")
+                    ydl_opts["cookiesfrombrowser"] = ("edge" if os.name == "nt" else "chrome",)
                 if attempt == max_retries - 1:
                     return {"success": False, "error": last_error, "platform": "instagram"}
 
@@ -221,6 +246,12 @@ def download_instagram_item_by_index(post_url, item_index, download_folder, prog
     Download a single carousel item by its 1-based index using yt_dlp's playlist_items.
     This is the reliable approach — avoids fragile per-entry-url downloads.
     """
+    ffmpeg_dir = os.environ.get("DANY_FFMPEG_DIR")
+    if ffmpeg_dir:
+        ffmpeg_exe = os.path.join(ffmpeg_dir, "ffmpeg.exe" if os.name == "nt" else "ffmpeg")
+        if not os.path.exists(ffmpeg_exe):
+            return {"success": False, "error": "FFmpeg executable is missing. It may have been quarantined by your Antivirus."}
+
     os.makedirs(download_folder, exist_ok=True)
 
     def progress_hook(d):
@@ -294,6 +325,12 @@ def download_instagram_zip(post_url, total_items, download_folder, progress_call
     Download all carousel items and bundle as ZIP.
     Downloads the full post (noplaylist=False) to get all items.
     """
+    ffmpeg_dir = os.environ.get("DANY_FFMPEG_DIR")
+    if ffmpeg_dir:
+        ffmpeg_exe = os.path.join(ffmpeg_dir, "ffmpeg.exe" if os.name == "nt" else "ffmpeg")
+        if not os.path.exists(ffmpeg_exe):
+            return {"success": False, "error": "FFmpeg executable is missing. It may have been quarantined by your Antivirus."}
+
     os.makedirs(download_folder, exist_ok=True)
     downloaded = []
 

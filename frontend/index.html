@@ -660,7 +660,78 @@
 
     .divider { width: 100%; height: 1px; background: var(--border); margin: 22px 0; }
 
-    /* ══════════════════════════════════════════
+    /* ─── UPDATE BANNER ─── */
+    .update-banner {
+      position: absolute;
+      bottom: -100px;
+      right: 20px;
+      background: rgba(20, 25, 35, 0.85);
+      border: 1px solid var(--border-bright);
+      border-radius: 16px;
+      padding: 16px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      z-index: 1000;
+      backdrop-filter: blur(20px);
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5), 0 0 20px rgba(255, 255, 255, 0.05);
+      transition: bottom 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      width: 280px;
+    }
+
+    .update-banner.show { bottom: 20px; }
+
+    .update-content {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .update-icon {
+      font-size: 24px;
+      color: #3b82f6;
+      filter: drop-shadow(0 0 8px rgba(59, 130, 246, 0.4));
+    }
+
+    .update-icon.spinning { animation: fa-spin 2s linear infinite; }
+
+    .update-text {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .update-title {
+      font-family: 'Syne', sans-serif;
+      font-weight: 700;
+      font-size: 14px;
+      color: #fff;
+    }
+
+    .update-subtitle {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .update-action-btn {
+      width: 100%;
+      padding: 10px;
+      background: rgba(59, 130, 246, 0.15);
+      border: 1px solid rgba(59, 130, 246, 0.3);
+      color: #93c5fd;
+      border-radius: 10px;
+      font-family: 'Syne', sans-serif;
+      font-weight: 700;
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .update-action-btn:hover {
+      background: rgba(59, 130, 246, 0.25);
+      color: #fff;
+      border-color: rgba(59, 130, 246, 0.5);
+    }    /* ══════════════════════════════════════════
        MOBILE PERFORMANCE — disable heavy GPU ops
     ══════════════════════════════════════════ */
     @media (max-width: 900px) {
@@ -1749,6 +1820,17 @@
           </div>
         </div>
 
+        <div class="update-banner" id="updateBanner">
+          <div class="update-content">
+            <i class="fa-solid fa-cloud-arrow-down update-icon" id="updateIcon"></i>
+            <div class="update-text">
+              <span class="update-title" id="updateTitle">Update Available</span>
+              <span class="update-subtitle" id="updateSubtitle">Downloading...</span>
+            </div>
+          </div>
+          <button class="update-action-btn" id="updateActionBtn" style="display: none;" onclick="window.electronAPI.installUpdate()">Install & Restart</button>
+        </div>
+
         <div class="status-message" id="statusMessage"></div>
         <div class="mobile-watermark">forex911</div>
       </div>
@@ -1792,6 +1874,7 @@
     let currentPlatform = 'youtube';
     let isDownloading = false;
     let currentDownloadItem = "";
+    let activeTaskId = null; // Used for cancelling specific download
     let progressInterval = null;
     let statusRotatorId = null;
 
@@ -2240,7 +2323,10 @@
 
       // Kill the Python process
       if (isElectron && window.electronAPI.cancelDownload) {
-        await window.electronAPI.cancelDownload();
+        if (activeTaskId) {
+            await window.electronAPI.cancelDownload(activeTaskId);
+            activeTaskId = null;
+        }
         window.electronAPI.removeDownloadProgressListener();
         if (window.electronAPI.removeDownloadProgressDetailListener) {
           window.electronAPI.removeDownloadProgressDetailListener();
@@ -2270,10 +2356,22 @@
       if (isElectron) saveToHistory('cancelled');
     }
 
+    async function hashString(str) {
+      const msgBuffer = new TextEncoder().encode(str);
+      const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      return hashArray.map(b => b.toString(16).padStart(2, '0')).join('').substring(0, 16);
+    }
+
     async function downloadMedia() {
       const url = urlInput.value.trim();
       const selectedFormat = formatSelect.value || 'best';
       if (!url) { showStatus('Please enter a URL', 'error'); return; }
+      
+      if (!/^https?:\/\//i.test(url)) {
+        showStatus('Invalid URL. Must start with http:// or https://', 'error', 4000);
+        return;
+      }
 
       console.log('[FRONTEND] downloadMedia() called');
       console.log('[FRONTEND] URL:', url);
@@ -2307,6 +2405,15 @@
 
         hideStatus(); // Hide any existing status message
 
+        // Remove old listeners to prevent memory leak and UI stuttering
+        window.electronAPI.removeDownloadProgressListener();
+        if (window.electronAPI.removeDownloadProgressDetailListener) {
+            window.electronAPI.removeDownloadProgressDetailListener();
+        }
+
+        const currentTaskId = await hashString(url + selectedFormat);
+        activeTaskId = currentTaskId;
+
         // Listen for real-time progress from main process
         window.electronAPI.onDownloadProgress((percent) => {
           progressBarFill.style.width = percent + '%';
@@ -2336,7 +2443,7 @@
 
         try {
           console.log('[FRONTEND] Calling window.electronAPI.downloadVideo()');
-          const data = await window.electronAPI.downloadVideo({ url, formatId: selectedFormat });
+          const data = await window.electronAPI.downloadVideo({ url, formatId: selectedFormat, taskId: currentTaskId });
           console.log('[FRONTEND] Download result:', JSON.stringify(data).substring(0, 300));
 
           // Cleanup progress listener
@@ -2414,128 +2521,12 @@
           
           // Save history
           saveToHistory('failed', error.message);
+        } finally {
+          activeTaskId = null;
         }
         return;
       }
 
-      // ═══════════════════════════════════════════════════
-      // WEB: Original API-based download (preserved)
-      // ═══════════════════════════════════════════════════
-      isDownloading = true;
-      macDownloadController.isPaused = false;
-      downloadBtn.disabled = true;
-      downloadBtn.classList.add('downloading');
-      downloadBtn.innerHTML = '<div class="btn-content"><i class="fa-solid fa-circle-notch fa-spin"></i><span>Starting Download...</span></div>';
-
-      const downloadId = Date.now().toString() + Math.random().toString(36).substring(2, 7);
-      progressContainer.classList.add('show');
-      progressBarFill.style.width = '0%';
-      progressText.textContent = '0%';
-      macDownloadController.abortController = new AbortController();
-      const signal = macDownloadController.abortController.signal;
-
-      try {
-        const response = await fetch(`${API_URL}/download/${currentPlatform}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url, format_id: selectedFormat }),
-          signal
-        });
-
-        if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(errorData.error || "Failed to start download");
-        }
-        
-        const taskData = await response.json();
-        const taskId = taskData.task_id;
-
-        downloadBtn.innerHTML = '<div class="btn-content"><i class="fa-solid fa-circle-notch fa-spin"></i><span>Downloading...</span></div>';
-        startStatusRotator(downloadMessages);
-        progressBarFill.classList.add('pulsing');
-
-        // Start a slow crawl to ~15% while we wait for first real progress
-        startCrawl(15);
-
-        macDownloadController.pollIntervalId = setInterval(async () => {
-          if (macDownloadController.isPaused) return;
-          try {
-            const res = await fetch(`${API_URL}/progress/${taskId}`,
-              { signal: macDownloadController.abortController?.signal });
-            if (res.ok) {
-              const data = await res.json();
-              const currentPercent = data.progress || 0;
-
-              if (currentPercent > 0) {
-                // Real progress arrived — stop crawl, drive bar with real data
-                stopCrawl();
-                progressBarFill.style.width = currentPercent + '%';
-                progressText.textContent = parseInt(currentPercent) + '%';
-              }
-
-              if (data.status === 'finished') {
-                stopCrawl();
-                stopStatusRotator();
-                clearInterval(macDownloadController.pollIntervalId);
-                macDownloadController.pollIntervalId = null;
-                progressBarFill.classList.remove('indeterminate', 'pulsing');
-                progressBarFill.style.width = '100%';
-                progressText.textContent = '100%';
-                const downloadUrl = data.download_url;
-                downloadBtn.classList.remove('downloading');
-                downloadBtn.innerHTML = '<div class="btn-content"><i class="fa-solid fa-check"></i><span>Success!</span></div>';
-
-                if (downloadUrl) {
-                  const a = document.createElement('a');
-                  a.style.display = 'none';
-                  a.href = API_URL + downloadUrl;
-                  a.download = '';
-                  document.body.appendChild(a);
-                  a.click();
-                  setTimeout(() => document.body.removeChild(a), 1000);
-                }
-
-                showStatus('Download started! Check your Downloads folder.', 'success', 6000);
-                setTimeout(() => {
-                  resetPreview(true);
-                  setTimeout(() => {
-                    progressContainer.classList.remove('show');
-                    hideStatus();
-                    isDownloading = false;
-                    downloadBtn.disabled = false;
-                  }, 4000);
-                }, 5000);
-              } else if (data.status === 'error') {
-                stopCrawl();
-                stopStatusRotator();
-                clearInterval(macDownloadController.pollIntervalId);
-                macDownloadController.pollIntervalId = null;
-                throw new Error(data.error || "Server processing failed");
-              } else if (currentPercent === 0) {
-                // No real progress yet — keep crawl toward 30% max
-                startCrawl(30);
-              }
-            }
-          } catch (e) { console.error("Polling error", e); }
-        }, 1000);
-
-      } catch (error) {
-        stopCrawl();
-        stopStatusRotator();
-        progressBarFill.classList.remove('indeterminate', 'pulsing');
-        progressBarFill.style.width = '0%';
-        progressBarFill.style.backgroundColor = '#ef4444';
-        downloadBtn.classList.remove('downloading');
-        downloadBtn.innerHTML = '<div class="btn-content"><i class="fa-solid fa-xmark"></i><span>Failed</span></div>';
-        setTimeout(() => {
-          downloadBtn.innerHTML = '<div class="btn-content"><i class="fa-solid fa-cloud-arrow-down"></i><span>Retry Download</span></div>';
-          progressContainer.classList.remove('show');
-          isDownloading = false;
-          downloadBtn.disabled = false;
-          progressBarFill.style.backgroundColor = 'var(--platform-color)';
-        }, 3000);
-        showStatus(`Error: ${error.message}`, 'error', 5000);
-      }
     }
 
     platformButtons.forEach(btn => {
@@ -3119,6 +3110,45 @@
       window.electronAPI.onDepInstallStatus((status) => {
         document.getElementById('depStatusText').textContent = status;
       });
+
+      // Listen for auto-updater events
+      if (window.electronAPI.onUpdateAvailable) {
+        window.electronAPI.onUpdateAvailable((info) => {
+          const banner = document.getElementById('updateBanner');
+          const icon = document.getElementById('updateIcon');
+          const title = document.getElementById('updateTitle');
+          const subtitle = document.getElementById('updateSubtitle');
+          
+          title.textContent = `Update v${info.version}`;
+          subtitle.textContent = "Downloading in background...";
+          icon.classList.add('spinning', 'fa-arrows-rotate');
+          icon.classList.remove('fa-cloud-arrow-down');
+          
+          banner.classList.add('show');
+        });
+
+        if (window.electronAPI.onUpdateProgress) {
+          window.electronAPI.onUpdateProgress((info) => {
+            const subtitle = document.getElementById('updateSubtitle');
+            let percent = info.percent ? Math.floor(info.percent) : 0;
+            let speed = info.bytesPerSecond ? (info.bytesPerSecond / 1024 / 1024).toFixed(1) + " MB/s" : "";
+            subtitle.textContent = `Downloading... ${percent}% ${speed ? '(' + speed + ')' : ''}`;
+          });
+        }
+
+        window.electronAPI.onUpdateDownloaded((info) => {
+          const icon = document.getElementById('updateIcon');
+          const subtitle = document.getElementById('updateSubtitle');
+          const btn = document.getElementById('updateActionBtn');
+          
+          subtitle.textContent = "Ready to install";
+          icon.classList.remove('spinning', 'fa-arrows-rotate');
+          icon.classList.add('fa-check-circle');
+          icon.style.color = '#22c55e';
+          
+          btn.style.display = 'block';
+        });
+      }
     }
   </script>
 </body>
