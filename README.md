@@ -15,7 +15,7 @@ Download from YouTube, Spotify, Instagram, and Pinterest — beautifully.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-a78bfa?style=for-the-badge&logoColor=white)](https://opensource.org/licenses/MIT)
 [![Platform: Windows](https://img.shields.io/badge/Platform-Windows-0078D4?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/forex911/dany-desktop/releases)
-[![Version](https://img.shields.io/badge/Version-1.0.0-22c55e?style=for-the-badge&logoColor=white)](https://github.com/forex911/dany-desktop/releases)
+[![Version](https://img.shields.io/badge/Version-1.0.2-22c55e?style=for-the-badge&logoColor=white)](https://github.com/forex911/dany-desktop/releases)
 [![Stars](https://img.shields.io/github/stars/forex911/dany-desktop?style=for-the-badge&color=f59e0b&logo=github&logoColor=white)](https://github.com/forex911/dany-desktop/stargazers)
 
 <br/>
