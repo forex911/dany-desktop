@@ -21,7 +21,7 @@ Download from YouTube, Spotify, Instagram, and Pinterest — beautifully.
 <br/>
 
 <!-- SCREENSHOT PLACEHOLDER -->
-> 📸 **Screenshot coming soon** — place your app screenshot here (`assets/screenshot.png`)
+<img src="/assets/image.png" alt="screenshot1" />
 
 </div>
 
