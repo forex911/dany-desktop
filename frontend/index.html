@@ -6,10 +6,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Dany</title>
   <link rel="icon" type="image/png" href="assets/icons/icon.png">
-  <link
-    href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=DM+Sans:wght@300;400;500&display=swap"
-    rel="stylesheet">
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <link rel="stylesheet" href="assets/fonts/google-fonts.css">
+  <link rel="stylesheet" href="assets/fonts/fontawesome.css">
   <style>
     :root {
       --bg: #070a0f;
@@ -675,11 +673,17 @@
       z-index: 1000;
       backdrop-filter: blur(20px);
       box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5), 0 0 20px rgba(255, 255, 255, 0.05);
-      transition: bottom 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      transition: bottom 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275), opacity 0.5s, visibility 0.5s;
       width: 280px;
+      opacity: 0;
+      visibility: hidden;
     }
 
-    .update-banner.show { bottom: 20px; }
+    .update-banner.show { 
+      bottom: 20px; 
+      opacity: 1;
+      visibility: visible;
+    }
 
     .update-content {
       display: flex;
