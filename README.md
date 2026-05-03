@@ -1,7 +1,7 @@
 <div align="center">
 
 <!-- LOGO PLACEHOLDER: Replace with your actual logo -->
-<img src="https://placehold.co/120x120/0d0d0f/a78bfa?text=D&font=montserrat" alt="Dany Desktop Logo" width="100" height="100" style="border-radius: 24px;" />
+<img src="/assets/icon.png" alt="Dany Desktop Logo" width="100" height="100" style="border-radius: 24px;" />
 
 <br/>
 <br/>
