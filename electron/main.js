@@ -349,6 +349,146 @@ ipcMain.handle("download-video", async (event, { url, formatId, taskId }) => {
 });
 
 // ═══════════════════════════════════════════════════════════
+// IPC: download-instagram-item — Download a single carousel item
+// ═══════════════════════════════════════════════════════════
+ipcMain.handle("download-instagram-item", async (event, { url, itemIndex, taskId }) => {
+    console.log("[IPC] ────────────────────────────────────────");
+    console.log("[IPC] Received 'download-instagram-item'");
+    console.log("[IPC] URL:", url);
+    console.log("[IPC] Item Index:", itemIndex);
+
+    const executablePath = path.join(binariesDir, "download_video.exe");
+    const downloadFolder = getDownloadFolder("instagram");
+    if (!taskId) taskId = "item_" + Date.now().toString();
+
+    const args = [url, downloadFolder, "best", taskId, `--item-index=${itemIndex}`];
+    console.log("[IPC] Spawning:", executablePath, ...args);
+
+    return new Promise((resolve) => {
+        const backendProcess = spawn(executablePath, args, {
+            cwd: binariesDir,
+            env: { ...process.env, DANY_FFMPEG_DIR: resolveFfmpegDir() },
+            windowsHide: true
+        });
+
+        activeDownloads.set(taskId, backendProcess);
+        let stdoutData = "";
+
+        backendProcess.stdout.on("data", (chunk) => {
+            stdoutData += chunk.toString();
+        });
+
+        backendProcess.stderr.on("data", (chunk) => {
+            console.log("[BACKEND ITEM stderr]", chunk.toString().trim());
+        });
+
+        backendProcess.on("error", (err) => {
+            activeDownloads.delete(taskId);
+            resolve({ success: false, error: "Failed to start backend: " + err.message });
+        });
+
+        backendProcess.on("close", (code) => {
+            activeDownloads.delete(taskId);
+
+            if (code !== 0 && !stdoutData.trim()) {
+                resolve({ success: false, error: "Backend failed with code " + code });
+                return;
+            }
+
+            const dataStr = stdoutData.trim();
+            try {
+                const result = JSON.parse(dataStr);
+                if (result.success && result.filename) {
+                    result._downloadFolder = downloadFolder;
+                    resolve(result);
+                } else {
+                    resolve({ success: false, error: result.error || "Download failed" });
+                }
+            } catch (err) {
+                resolve({ success: false, error: "Invalid JSON: " + err.message });
+            }
+        });
+    });
+});
+
+// ═══════════════════════════════════════════════════════════
+// IPC: download-instagram-zip — Download all carousel items as ZIP
+// ═══════════════════════════════════════════════════════════
+ipcMain.handle("download-instagram-zip", async (event, { url, taskId }) => {
+    console.log("[IPC] ────────────────────────────────────────");
+    console.log("[IPC] Received 'download-instagram-zip'");
+    console.log("[IPC] URL:", url);
+
+    const executablePath = path.join(binariesDir, "download_video.exe");
+    const downloadFolder = getDownloadFolder("instagram");
+    if (!taskId) taskId = "zip_" + Date.now().toString();
+
+    const args = [url, downloadFolder, "best", taskId, "--zip"];
+    console.log("[IPC] Spawning:", executablePath, ...args);
+
+    return new Promise((resolve) => {
+        const backendProcess = spawn(executablePath, args, {
+            cwd: binariesDir,
+            env: { ...process.env, DANY_FFMPEG_DIR: resolveFfmpegDir() },
+            windowsHide: true
+        });
+
+        activeDownloads.set(taskId, backendProcess);
+        let stdoutData = "";
+
+        backendProcess.stdout.on("data", (chunk) => {
+            stdoutData += chunk.toString();
+        });
+
+        backendProcess.stderr.on("data", (chunk) => {
+            const text = chunk.toString();
+            console.log("[BACKEND ZIP stderr]", text.trim());
+            
+            // Forward legacy progress to UI for zip loading bar
+            const lines = text.split("\n");
+            for (const line of lines) {
+                const trimmed = line.trim();
+                if (trimmed.startsWith("PROGRESS:")) {
+                    const percent = parseFloat(trimmed.replace("PROGRESS:", ""));
+                    if (!isNaN(percent) && !event.sender.isDestroyed()) {
+                        event.sender.send("download-progress", percent);
+                        // Also send as detail structure so it matches expected
+                        event.sender.send("download-progress-detail", { percent: percent });
+                    }
+                }
+            }
+        });
+
+        backendProcess.on("error", (err) => {
+            activeDownloads.delete(taskId);
+            resolve({ success: false, error: "Failed to start backend: " + err.message });
+        });
+
+        backendProcess.on("close", (code) => {
+            activeDownloads.delete(taskId);
+
+            if (code !== 0 && !stdoutData.trim()) {
+                resolve({ success: false, error: "Backend failed with code " + code });
+                return;
+            }
+
+            const dataStr = stdoutData.trim();
+            try {
+                const result = JSON.parse(dataStr);
+                if (result.success && result.filename) {
+                    result._downloadFolder = downloadFolder;
+                    resolve(result);
+                } else {
+                    resolve({ success: false, error: result.error || "ZIP failed" });
+                }
+            } catch (err) {
+                resolve({ success: false, error: "Invalid JSON: " + err.message });
+            }
+        });
+    });
+});
+
+// ═══════════════════════════════════════════════════════════
 // IPC: cancel-download — Kill active download process
 // ═══════════════════════════════════════════════════════════
 ipcMain.handle("cancel-download", async (event, taskId) => {

@@ -8,6 +8,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
 
     // ── Download ──
     downloadVideo: (options) => ipcRenderer.invoke("download-video", options),
+    downloadInstagramItem: (options) => ipcRenderer.invoke("download-instagram-item", options),
+    downloadInstagramZip: (options) => ipcRenderer.invoke("download-instagram-zip", options),
 
     // ── Progress: basic percent ──
     onDownloadProgress: (callback) => {

@@ -34,7 +34,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import json
 from downloaders.youtube import download_youtube
 from downloaders.spotify import download_spotify
-from downloaders.instagram import download_instagram
+from downloaders.instagram import download_instagram, download_instagram_item_by_index, download_instagram_zip
 from downloaders.pinterest import download_pinterest
 
 
@@ -151,12 +151,22 @@ def detect_platform(url):
 # ═══════════════════════════════════════════════════════════
 try:
     if len(sys.argv) < 4:
-        raise ValueError("Usage: python download_video.py <URL> <FOLDER> <FORMAT_ID> [TASK_ID]")
+        raise ValueError("Usage: python download_video.py <URL> <FOLDER> <FORMAT_ID> [TASK_ID] [--item-index=N]")
 
     url = sys.argv[1]
     folder = sys.argv[2]
     format_id = sys.argv[3]
-    task_id = sys.argv[4] if len(sys.argv) > 4 else None
+    task_id = sys.argv[4] if len(sys.argv) > 4 and not sys.argv[4].startswith('--') else None
+
+    # Parse --item-index=N and --zip from any position
+    item_index = None
+    is_zip = False
+    for arg in sys.argv[4:]:
+        if arg.startswith('--item-index='):
+            item_index = int(arg.split('=')[1])
+        if arg == '--zip':
+            is_zip = True
+
     platform = detect_platform(url)
 
     log(f"URL: {url}")
@@ -164,6 +174,10 @@ try:
     log(f"Download folder: {folder}")
     log(f"Format ID: {format_id}")
     log(f"Task ID: {task_id}")
+    if item_index is not None:
+        log(f"Item Index: {item_index}")
+    if is_zip:
+        log("Zip mode enabled")
 
     if platform == "youtube":
         log("Calling download_youtube()...")
@@ -190,16 +204,37 @@ try:
         )
 
     elif platform == "instagram":
-        log("Calling download_instagram()...")
-        result = download_instagram(
-            url=url,
-            download_folder=folder,
-            progress_callback=progress_callback,
-            format_id=format_id,
-            task_id=task_id,
-            extra_progress_hooks=[rich_progress_hook],
-            extra_postprocessor_hooks=[postprocessor_hook]
-        )
+        if is_zip:
+            log("Calling download_instagram_zip()...")
+            result = download_instagram_zip(
+                post_url=url,
+                total_items=10, # default placeholder, not really used in our modified zip logic for breaking early
+                download_folder=folder,
+                progress_callback=progress_callback,
+                task_id=task_id
+            )
+        elif item_index is not None:
+            log(f"Calling download_instagram_item_by_index(index={item_index})...")
+            result = download_instagram_item_by_index(
+                post_url=url,
+                item_index=item_index,
+                download_folder=folder,
+                progress_callback=progress_callback,
+                task_id=task_id,
+                extra_progress_hooks=[rich_progress_hook],
+                extra_postprocessor_hooks=[postprocessor_hook]
+            )
+        else:
+            log("Calling download_instagram()...")
+            result = download_instagram(
+                url=url,
+                download_folder=folder,
+                progress_callback=progress_callback,
+                format_id=format_id,
+                task_id=task_id,
+                extra_progress_hooks=[rich_progress_hook],
+                extra_postprocessor_hooks=[postprocessor_hook]
+            )
 
     elif platform == "pinterest":
         log("Calling download_pinterest()...")

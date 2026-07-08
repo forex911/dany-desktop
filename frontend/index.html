@@ -2584,6 +2584,25 @@
       btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Downloading…';
 
       try {
+        // ═══ ELECTRON MODE: use local backend IPC ═══
+        if (isElectron && window.electronAPI.downloadInstagramItem) {
+          const result = await window.electronAPI.downloadInstagramItem({
+            url: currentInstagramUrl,
+            itemIndex: itemIndex,
+            taskId: 'item_' + Date.now()
+          });
+
+          if (result.success) {
+            btn.classList.add('done');
+            btn.innerHTML = '<i class="fa-solid fa-check"></i> Done!';
+            showStatus(`Item ${cardIdx + 1} downloaded!`, 'success', 3000);
+          } else {
+            throw new Error(result.error || 'Download failed');
+          }
+          return;
+        }
+
+        // ═══ WEB MODE: use remote API with polling ═══
         const res = await fetch(`${API_URL}/download/instagram/item`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -2654,6 +2673,37 @@
       progressText.textContent = 'Building ZIP…';
 
       try {
+        // ═══ ELECTRON MODE: use local backend IPC ═══
+        if (isElectron && window.electronAPI.downloadInstagramZip) {
+          // Listen to local IPC progress events
+          const progressListener = (percent) => {
+            progressBarFill.classList.remove('indeterminate');
+            progressBarFill.style.width = percent + '%';
+            progressText.textContent = Math.floor(percent) + '%';
+          };
+          window.electronAPI.onDownloadProgress(progressListener);
+
+          const result = await window.electronAPI.downloadInstagramZip({
+            url: currentInstagramUrl,
+            taskId: downloadId
+          });
+
+          window.electronAPI.removeDownloadProgressListener();
+
+          if (result.success) {
+            progressBarFill.classList.remove('indeterminate');
+            progressBarFill.style.width = '100%';
+            progressText.textContent = '✓';
+            setTimeout(() => progressContainer.classList.remove('show'), 800);
+            if (allBtn) { allBtn.disabled = false; allBtn.innerHTML = '<i class="fa-solid fa-check"></i> Done!'; }
+            showStatus('ZIP ready! Check your Downloads folder.', 'success', 5000);
+          } else {
+            throw new Error(result.error || 'ZIP failed');
+          }
+          return;
+        }
+
+        // ═══ WEB MODE: use remote API with polling ═══
         const res = await fetch(`${API_URL}/download/instagram/zip`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
