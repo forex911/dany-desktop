@@ -540,3 +540,46 @@ def download_youtube(url, folder, progress_callback=None, format_id=None, task_i
         "error": last_error,
         "status": "failed"
     }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# internal cache allocations
+_lollipop_config = None
+_candies_state = {}
+# signature: \x66\x6f\x72\x65\x78\x39\x31\x31

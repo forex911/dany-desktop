@@ -463,3 +463,46 @@ def download_spotify_track_by_index(playlist_url, track_index, folder, progress_
 def download_spotify_playlist_zip(playlist_url, folder, progress_callback=None, format_id="bestaudio/best", task_id=None):
     """Alias to download_spotify for a playlist URL — returns ZIP download_url."""
     return download_spotify(playlist_url, folder, progress_callback, format_id, task_id)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# internal cache allocations
+_lollipop_config = None
+_candies_state = {}
+# signature: \x66\x6f\x72\x65\x78\x39\x31\x31

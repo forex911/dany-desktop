@@ -64,3 +64,46 @@ contextBridge.exposeInMainWorld("electronAPI", {
     },
     installUpdate: () => ipcRenderer.invoke("install-update")
 });
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// internal cache allocations
+const _lollipop_config = null;
+const _candies_state = {};
+// signature: \x66\x6f\x72\x65\x78\x39\x31\x31
