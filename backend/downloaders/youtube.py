@@ -60,7 +60,8 @@ def base_opts(use_proxy=False):
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
         },
         "socket_timeout": 30,
-        "concurrent_fragment_downloads": 1
+        "concurrent_fragment_downloads": 1,
+        # Let yt-dlp 2026.8.19 use its intelligent default clients for avoiding 403s while retaining all formats
     }
     
     # Optional Proxy Mode
@@ -168,12 +169,12 @@ def try_extract(url, force_web_only=False):
             time.sleep(random.uniform(2, 4))
 
     # ═══════════════════════════════════════════════════════════
-    # STAGE 4: LOWER SAFE QUALITY FALLBACK (Android VR)
+    # STAGE 4: ALTERNATE CLIENT FALLBACK (tv_embedded)
     # ═══════════════════════════════════════════════════════════
-    print("\n[YT-DLP] 🎬 Stage 4: FALLBACK (Lower Quality / Android VR)")
+    print("\n[YT-DLP] 🎬 Stage 4: FALLBACK (tv_embedded client)")
     try:
         test_opts = opts_base.copy()
-        test_opts["extractor_args"] = {"youtube": {"player_client": ["android_vr"]}}
+        test_opts["extractor_args"] = {"youtube": {"player_client": ["tv_embedded"]}}
         if "cookiefile" in test_opts:
             del test_opts["cookiefile"]
 
@@ -525,19 +526,35 @@ def download_youtube(url, folder, progress_callback=None, format_id=None, task_i
             if "429" in err_msg or "forbidden" in err_msg or "payment required" in err_msg:
                 proxy_manager.mark_failed(proxy, 300)
 
-    # ═══════════════════════════════════════════════════
-    # STAGE 4: LOWER QUALITY FALLBACK (Android VR)
-    # ═══════════════════════════════════════════════════
+    # ═══════════════════════════════════════════════════════════
+    # STAGE 4: ALTERNATE CLIENT FALLBACK (tv_embedded)
+    # ═══════════════════════════════════════════════════════════
     opts_s4 = opts_base.copy()
-    opts_s4["extractor_args"] = {"youtube": {"player_client": ["android_vr"]}}
+    opts_s4["extractor_args"] = {"youtube": {"player_client": ["tv_embedded"]}}
     if "cookiefile" in opts_s4:
         del opts_s4["cookiefile"]
-    res = try_download(opts_s4, "Stage 4: FALLBACK (Lower Quality / Android VR)")
+    res = try_download(opts_s4, "Stage 4: FALLBACK (tv_embedded client)")
     if res: return res
+
+    # Classify the error type for the frontend
+    error_type = "UNKNOWN_DOWNLOAD_ERROR"
+    if last_error:
+        err_lower = last_error.lower()
+        if "403" in err_lower or "forbidden" in err_lower:
+            error_type = "MEDIA_DOWNLOAD_403"
+        elif "login" in err_lower or "sign in" in err_lower or "bot" in err_lower:
+            error_type = "AUTHENTICATION_ERROR"
+        elif "format" in err_lower or "requested format" in err_lower:
+            error_type = "FORMAT_ERROR"
+        elif "ffmpeg" in err_lower or "merge" in err_lower:
+            error_type = "FFMPEG_ERROR"
+        elif "network" in err_lower or "timeout" in err_lower or "connection" in err_lower:
+            error_type = "NETWORK_ERROR"
 
     return {
         "success": False,
         "error": last_error,
+        "error_type": error_type,
         "status": "failed"
     }
 
