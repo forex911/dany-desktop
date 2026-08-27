@@ -18,6 +18,9 @@ COMMON_ARGS = [
     "--hidden-import=PIL",
     "--hidden-import=PIL.Image",
     "--hidden-import=urllib3",
+    "--hidden-import=playwright",
+    "--hidden-import=pyee",
+    "--hidden-import=greenlet",
     "--collect-all", "yt_dlp",
 ]
 
