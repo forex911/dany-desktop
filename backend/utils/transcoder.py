@@ -126,6 +126,8 @@ def probe_media(filepath):
             "duration": 0,
             "fps": 0,
             "pix_fmt": None,
+            "is_vfr": False,
+            "sample_rate": 0,
         }
 
         for s in streams:
@@ -135,14 +137,28 @@ def probe_media(filepath):
                 info["height"] = int(s.get("height", 0))
                 info["pix_fmt"] = s.get("pix_fmt")
                 rfr = s.get("r_frame_rate", "0/1")
+                afr = s.get("avg_frame_rate", "0/1")
                 try:
                     num, den = rfr.split("/")
-                    info["fps"] = round(int(num) / int(den), 3) if int(den) else 0
+                    fps_r = round(int(num) / int(den), 2) if int(den) else 0
                 except (ValueError, ZeroDivisionError):
-                    info["fps"] = 0
+                    fps_r = 0
+                try:
+                    num_a, den_a = afr.split("/")
+                    fps_a = round(int(num_a) / int(den_a), 2) if int(den_a) else 0
+                except (ValueError, ZeroDivisionError):
+                    fps_a = 0
+                info["fps"] = fps_r or fps_a
+                # Check for Variable Frame Rate (VFR) which causes audio drift in Premiere/DaVinci
+                if fps_r > 0 and fps_a > 0 and abs(fps_r - fps_a) > 0.15:
+                    info["is_vfr"] = True
 
             elif s.get("codec_type") == "audio" and not info["audio_codec"]:
                 info["audio_codec"] = s.get("codec_name")
+                try:
+                    info["sample_rate"] = int(s.get("sample_rate", 0))
+                except (ValueError, TypeError):
+                    info["sample_rate"] = 0
 
         duration_str = fmt.get("duration", "0")
         try:
@@ -160,8 +176,9 @@ def probe_media(filepath):
 def is_editor_compatible(filepath):
     """
     Returns True if the file already has H.264 (AVC) video + AAC audio
-    in an MP4 container with standard 8-bit yuv420p pixel format,
-    meaning it will import into Premiere Pro, DaVinci Resolve, Final Cut, etc.
+    in an MP4 container with standard 8-bit yuv420p pixel format and
+    Constant Frame Rate (CFR), meaning it will import into Premiere Pro,
+    DaVinci Resolve, Final Cut, etc. without audio drift or decode errors.
     """
     if not filepath or not os.path.exists(filepath):
         return False
@@ -182,11 +199,13 @@ def is_editor_compatible(filepath):
     has_video = bool(info.get("video_codec"))
     has_audio = bool(info.get("audio_codec"))
 
-    # If video stream exists, must be H.264 / AVC and yuv420p
+    # If video stream exists, must be H.264 / AVC, yuv420p, and constant frame rate
     if has_video:
         if vc not in ("h264", "avc1"):
             return False
         if pix and pix not in ("yuv420p", "yuvj420p"):
+            return False
+        if info.get("is_vfr"):
             return False
 
     # If audio stream exists, must be AAC
@@ -251,7 +270,7 @@ def _build_transcode_cmd(ffmpeg, input_path, output_path, encoder="libx264"):
     """
     Build the FFmpeg command for H.264 + AAC transcoding.
     Uses smart stream copy when a stream is already compatible:
-      - If video is already H.264 yuv420p, copy video (-c:v copy)
+      - If video is already H.264 yuv420p CFR, copy video (-c:v copy)
       - If audio is already AAC, copy audio (-c:a copy)
     """
     info = probe_media(input_path) or {}
@@ -266,7 +285,7 @@ def _build_transcode_cmd(ffmpeg, input_path, output_path, encoder="libx264"):
 
     # Video stream configuration
     if has_video:
-        video_is_h264 = vc in ("h264", "avc1") and pix in ("yuv420p", "yuvj420p", "")
+        video_is_h264 = vc in ("h264", "avc1") and pix in ("yuv420p", "yuvj420p", "") and not info.get("is_vfr")
         if video_is_h264:
             # Stream copy: 0% quality loss, near-instant
             cmd.extend(["-c:v", "copy"])
@@ -277,6 +296,7 @@ def _build_transcode_cmd(ffmpeg, input_path, output_path, encoder="libx264"):
                 "-rc", "vbr",
                 "-cq", "20",           # visually lossless
                 "-pix_fmt", "yuv420p", # universal 8-bit format
+                "-fps_mode", "cfr",    # force Constant Frame Rate for NLE compatibility
             ])
         else:
             cmd.extend([
@@ -284,18 +304,19 @@ def _build_transcode_cmd(ffmpeg, input_path, output_path, encoder="libx264"):
                 "-preset", "medium",
                 "-crf", "18",          # high quality
                 "-pix_fmt", "yuv420p",
+                "-fps_mode", "cfr",    # force Constant Frame Rate for NLE compatibility
             ])
     else:
         cmd.append("-vn")
 
     # Audio stream configuration
     if has_audio:
-        audio_is_aac = ac in ("aac", "mp4a")
+        audio_is_aac = ac in ("aac", "mp4a") and info.get("sample_rate") in (44100, 48000)
         if audio_is_aac:
             # Stream copy: 0% quality loss, near-instant
             cmd.extend(["-c:a", "copy"])
         else:
-            cmd.extend(["-c:a", "aac", "-b:a", "192k"])
+            cmd.extend(["-c:a", "aac", "-b:a", "192k", "-ar", "48000"])
     else:
         cmd.append("-an")
 

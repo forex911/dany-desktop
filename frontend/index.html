@@ -1767,9 +1767,16 @@
         <div class="carousel-wrapper" id="carouselWrapper">
           <div class="carousel-header">
             <span class="carousel-title"><i class="fa-solid fa-images" style="margin-right:5px;color:var(--platform-color)"></i>Carousel — <span id="carouselCount">0</span> items</span>
-            <button class="download-all-btn" id="downloadAllBtn" onclick="downloadAllCarousel()">
-              <i class="fa-solid fa-file-zipper"></i> Download All
-            </button>
+            <div style="display:flex;align-items:center;gap:12px;">
+              <label class="output-mode-row" id="carouselOutputModeToggle" title="Convert videos to Premiere Pro / DaVinci Resolve compatible H.264 + AAC MP4">
+                <input type="checkbox" class="output-mode-cb" id="carouselEditorModeCheckbox" checked>
+                <span class="toggle-switch"></span>
+                <span class="toggle-label-text">Editor Compatible</span>
+              </label>
+              <button class="download-all-btn" id="downloadAllBtn" onclick="downloadAllCarousel()">
+                <i class="fa-solid fa-file-zipper"></i> Download All
+              </button>
+            </div>
           </div>
           <div class="carousel-scroll" id="carouselScroll"></div>
         </div>
@@ -2073,6 +2080,14 @@
     let trackItems = [];        // Spotify playlist: [{index, title, artist, thumbnail}, ...]
     let currentSpotifyUrl = '';    // original Spotify playlist URL
 
+    // Sync Editor Mode checkboxes (preview card & carousel header)
+    const editorModeCb = document.getElementById('editorModeCheckbox');
+    const carouselEditorModeCb = document.getElementById('carouselEditorModeCheckbox');
+    if (editorModeCb && carouselEditorModeCb) {
+      editorModeCb.addEventListener('change', () => { carouselEditorModeCb.checked = editorModeCb.checked; });
+      carouselEditorModeCb.addEventListener('change', () => { editorModeCb.checked = carouselEditorModeCb.checked; });
+    }
+
     // Platform state persistence (Feature 5)
     const platformState = {
       youtube: { url: '', previewData: null, selectedFormat: '' },
@@ -2359,14 +2374,15 @@
               formatSelect.appendChild(option);
             }
 
-            // Editor Compatible toggle (YouTube video only)
+            // Editor Compatible toggle (YouTube & Instagram video)
             const outputModeToggle = document.getElementById('outputModeToggle');
             if (outputModeToggle) {
               const isAudio = formatSelect.value && formatSelect.value.includes('bestaudio');
-              outputModeToggle.style.display = (currentPlatform === 'youtube' && !isAudio) ? 'flex' : 'none';
+              const isVideoPlatform = (currentPlatform === 'youtube' || currentPlatform === 'instagram');
+              outputModeToggle.style.display = (isVideoPlatform && !isAudio) ? 'flex' : 'none';
               formatSelect.onchange = () => {
                 const currentIsAudio = formatSelect.value && formatSelect.value.includes('bestaudio');
-                outputModeToggle.style.display = (currentPlatform === 'youtube' && !currentIsAudio) ? 'flex' : 'none';
+                outputModeToggle.style.display = (isVideoPlatform && !currentIsAudio) ? 'flex' : 'none';
               };
             }
 
@@ -2661,10 +2677,12 @@
       try {
         // ═══ ELECTRON MODE: use local backend IPC ═══
         if (isElectron && window.electronAPI.downloadInstagramItem) {
+          const editorMode = (document.getElementById('carouselEditorModeCheckbox')?.checked || document.getElementById('editorModeCheckbox')?.checked) ? 'editor_compatible' : 'original';
           const result = await window.electronAPI.downloadInstagramItem({
             url: currentInstagramUrl,
             itemIndex: itemIndex,
-            taskId: 'item_' + Date.now()
+            taskId: 'item_' + Date.now(),
+            outputMode: editorMode
           });
 
           if (result.success) {
@@ -2758,9 +2776,11 @@
           };
           window.electronAPI.onDownloadProgress(progressListener);
 
+          const editorMode = (document.getElementById('carouselEditorModeCheckbox')?.checked || document.getElementById('editorModeCheckbox')?.checked) ? 'editor_compatible' : 'original';
           const result = await window.electronAPI.downloadInstagramZip({
             url: currentInstagramUrl,
-            taskId: downloadId
+            taskId: downloadId,
+            outputMode: editorMode
           });
 
           window.electronAPI.removeDownloadProgressListener();

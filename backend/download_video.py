@@ -208,31 +208,6 @@ try:
             extra_postprocessor_hooks=[postprocessor_hook]
         )
 
-        # ── Editor-compatible transcoding (YouTube only) ──
-        if result.get("success") and output_mode == "editor_compatible" and result.get("filename"):
-            filepath = os.path.join(folder, result["filename"])
-            if os.path.exists(filepath):
-                log(f"Editor-compatible mode: checking {result['filename']}")
-
-                def transcode_progress(stage):
-                    info = json.dumps({
-                        "speed": "\u2014", "eta": "\u2014",
-                        "downloaded": "\u2014", "total": "\u2014",
-                        "stage": stage,
-                        "item": result.get("title", "")
-                    })
-                    print(f"DLPROGRESS:{info}", flush=True)
-
-                tc_ok, tc_path, tc_err = safe_transcode_in_place(filepath, transcode_progress)
-                if tc_ok:
-                    result["filename"] = os.path.basename(tc_path)
-                    result["editor_compatible"] = True
-                    log(f"Transcode success: {result['filename']}")
-                else:
-                    log(f"Transcode failed (keeping original): {tc_err}")
-                    result["transcode_warning"] = tc_err
-                    result["editor_compatible"] = False
-
     elif platform == "spotify":
         log("Calling download_spotify()...")
         result = download_spotify(
@@ -253,7 +228,8 @@ try:
                 total_items=10, # default placeholder, not really used in our modified zip logic for breaking early
                 download_folder=folder,
                 progress_callback=progress_callback,
-                task_id=task_id
+                task_id=task_id,
+                output_mode=output_mode
             )
         elif item_index is not None:
             log(f"Calling download_instagram_item_by_index(index={item_index})...")
@@ -295,6 +271,46 @@ try:
             "success": False,
             "error": f"Unsupported platform. URL: {url}"
         }
+
+    # ── Universal Editor-compatible transcoding (YouTube, Instagram, etc.) ──
+    if result.get("success") and output_mode == "editor_compatible":
+        targets = []
+        if result.get("filename"):
+            targets.append(result["filename"])
+        if result.get("files") and isinstance(result["files"], list):
+            for f in result["files"]:
+                if f not in targets:
+                    targets.append(f)
+
+        for fname in targets:
+            ext = os.path.splitext(fname)[1].lower()
+            if ext not in (".mp4", ".mkv", ".webm", ".mov", ".m4v", ".avi"):
+                continue
+
+            filepath = os.path.join(folder, fname)
+            if os.path.exists(filepath):
+                log(f"Editor-compatible mode: checking {fname}")
+
+                def transcode_progress(stage):
+                    info = json.dumps({
+                        "speed": "—", "eta": "—",
+                        "downloaded": "—", "total": "—",
+                        "stage": stage,
+                        "item": result.get("title", "")
+                    })
+                    print(f"DLPROGRESS:{info}", flush=True)
+
+                tc_ok, tc_path, tc_err = safe_transcode_in_place(filepath, transcode_progress)
+                if tc_ok:
+                    new_name = os.path.basename(tc_path)
+                    if fname == result.get("filename"):
+                        result["filename"] = new_name
+                    result["editor_compatible"] = True
+                    log(f"Transcode success: {new_name}")
+                else:
+                    log(f"Transcode failed (keeping original): {tc_err}")
+                    result["transcode_warning"] = tc_err
+                    result["editor_compatible"] = False
 
     # Add platform tag
     if "platform" not in result:

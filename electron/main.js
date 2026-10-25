@@ -377,16 +377,20 @@ ipcMain.handle("download-video", async (event, { url, formatId, taskId, outputMo
 // ═══════════════════════════════════════════════════════════
 // IPC: download-instagram-item — Download a single carousel item
 // ═══════════════════════════════════════════════════════════
-ipcMain.handle("download-instagram-item", async (event, { url, itemIndex, taskId }) => {
+ipcMain.handle("download-instagram-item", async (event, { url, itemIndex, taskId, outputMode }) => {
     console.log("[IPC] ────────────────────────────────────────");
     console.log("[IPC] Received 'download-instagram-item'");
     console.log("[IPC] URL:", url);
     console.log("[IPC] Item Index:", itemIndex);
+    console.log("[IPC] Output Mode:", outputMode || "original");
 
     const downloadFolder = getDownloadFolder("instagram");
     if (!taskId) taskId = "item_" + Date.now().toString();
 
     const args = [url, downloadFolder, "best", taskId, `--item-index=${itemIndex}`];
+    if (outputMode && outputMode !== "original") {
+        args.push(`--output-mode=${outputMode}`);
+    }
     const invocation = getBackendInvocation("download_video", args);
     console.log("[IPC] Invoking:", invocation.command, invocation.args.join(" "));
 
@@ -440,15 +444,19 @@ ipcMain.handle("download-instagram-item", async (event, { url, itemIndex, taskId
 // ═══════════════════════════════════════════════════════════
 // IPC: download-instagram-zip — Download all carousel items as ZIP
 // ═══════════════════════════════════════════════════════════
-ipcMain.handle("download-instagram-zip", async (event, { url, taskId }) => {
+ipcMain.handle("download-instagram-zip", async (event, { url, taskId, outputMode }) => {
     console.log("[IPC] ────────────────────────────────────────");
     console.log("[IPC] Received 'download-instagram-zip'");
     console.log("[IPC] URL:", url);
+    console.log("[IPC] Output Mode:", outputMode || "original");
 
     const downloadFolder = getDownloadFolder("instagram");
     if (!taskId) taskId = "zip_" + Date.now().toString();
 
     const args = [url, downloadFolder, "best", taskId, "--zip"];
+    if (outputMode && outputMode !== "original") {
+        args.push(`--output-mode=${outputMode}`);
+    }
     const invocation = getBackendInvocation("download_video", args);
     console.log("[IPC] Invoking:", invocation.command, invocation.args.join(" "));
 

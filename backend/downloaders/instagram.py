@@ -340,12 +340,17 @@ class FFmpegMerger:
         -c copy = no re-encoding, just remuxing (instant).
         """
         # Resolve FFmpeg path — prefer app-managed binary
-        ffmpeg_dir = os.environ.get("DANY_FFMPEG_DIR")
-        ffmpeg_exe = "ffmpeg"
-        if ffmpeg_dir:
-            candidate = os.path.join(ffmpeg_dir, "ffmpeg.exe" if os.name == "nt" else "ffmpeg")
-            if os.path.exists(candidate):
-                ffmpeg_exe = candidate
+        try:
+            from utils.transcoder import get_ffmpeg_path
+            resolved = get_ffmpeg_path()
+            ffmpeg_exe = resolved or "ffmpeg"
+        except Exception:
+            ffmpeg_dir = os.environ.get("DANY_FFMPEG_DIR")
+            ffmpeg_exe = "ffmpeg"
+            if ffmpeg_dir:
+                candidate = os.path.join(ffmpeg_dir, "ffmpeg.exe" if os.name == "nt" else "ffmpeg")
+                if os.path.exists(candidate):
+                    ffmpeg_exe = candidate
 
         cmd = [
             ffmpeg_exe,
@@ -417,6 +422,12 @@ def _convert_webp_to_jpg(filepath: str) -> str:
 
 def _check_ffmpeg():
     """Check that FFmpeg is available."""
+    try:
+        from utils.transcoder import get_ffmpeg_path
+        if get_ffmpeg_path():
+            return True
+    except Exception:
+        pass
     ffmpeg_dir = os.environ.get("DANY_FFMPEG_DIR")
     if ffmpeg_dir:
         ffmpeg_exe = os.path.join(ffmpeg_dir, "ffmpeg.exe" if os.name == "nt" else "ffmpeg")
@@ -896,7 +907,8 @@ def download_instagram_item_by_index(post_url, item_index, download_folder,
 # ═══════════════════════════════════════════════════════════════════
 
 def download_instagram_zip(post_url, total_items, download_folder,
-                           progress_callback=None, task_id=None):
+                           progress_callback=None, task_id=None,
+                           output_mode="original"):
     """
     Download all items from a carousel and bundle as ZIP.
     """
@@ -939,11 +951,27 @@ def download_instagram_zip(post_url, total_items, download_folder,
                     final_name = f"{shortcode}_{tag}_video{v_idx}.mp4"
                     final_path = Path(download_folder) / FileDownloader._safe_filename(final_name)
                     merger.merge(video_path, audio_path, final_path)
+                    if output_mode == "editor_compatible":
+                        try:
+                            from utils.transcoder import safe_transcode_in_place
+                            _ok, _tp, _ = safe_transcode_in_place(str(final_path))
+                            if _ok and _tp:
+                                final_path = Path(_tp)
+                        except Exception as e:
+                            print(f"[Instagram ZIP] Transcode warning: {e}")
                     downloaded_files.append(final_path.name)
                 else:
                     final_name = f"{shortcode}_{tag}_video{v_idx}.mp4"
                     final_path = Path(download_folder) / FileDownloader._safe_filename(final_name)
                     video_path.rename(final_path)
+                    if output_mode == "editor_compatible":
+                        try:
+                            from utils.transcoder import safe_transcode_in_place
+                            _ok, _tp, _ = safe_transcode_in_place(str(final_path))
+                            if _ok and _tp:
+                                final_path = Path(_tp)
+                        except Exception as e:
+                            print(f"[Instagram ZIP] Transcode warning: {e}")
                     downloaded_files.append(final_path.name)
 
                 if progress_callback:
