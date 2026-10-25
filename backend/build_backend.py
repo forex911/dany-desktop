@@ -21,6 +21,9 @@ COMMON_ARGS = [
     "--hidden-import=playwright",
     "--hidden-import=pyee",
     "--hidden-import=greenlet",
+    "--hidden-import=utils.transcoder",
+    "--hidden-import=utils.proxy_manager",
+    "--hidden-import=utils.cookie_manager",
     "--collect-all", "yt_dlp",
 ]
 

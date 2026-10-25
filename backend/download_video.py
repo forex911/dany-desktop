@@ -17,6 +17,18 @@ import sys
 import os
 import re
 
+# Reconfigure streams to UTF-8 to prevent charmap errors on Windows
+if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+if sys.stderr and hasattr(sys.stderr, "reconfigure"):
+    try:
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 # ═══════════════════════════════════════════════════════════
 # STEP 1: Capture REAL stdout, redirect all print() → stderr
 # ═══════════════════════════════════════════════════════════
@@ -36,6 +48,7 @@ from downloaders.youtube import download_youtube
 from downloaders.spotify import download_spotify
 from downloaders.instagram import download_instagram, download_instagram_item_by_index, download_instagram_zip
 from downloaders.pinterest import download_pinterest
+from utils.transcoder import safe_transcode_in_place, is_editor_compatible, probe_media
 
 
 def log(msg):
@@ -161,11 +174,14 @@ try:
     # Parse --item-index=N and --zip from any position
     item_index = None
     is_zip = False
+    output_mode = "original"
     for arg in sys.argv[4:]:
         if arg.startswith('--item-index='):
             item_index = int(arg.split('=')[1])
         if arg == '--zip':
             is_zip = True
+        if arg.startswith('--output-mode='):
+            output_mode = arg.split('=')[1]
 
     platform = detect_platform(url)
 
@@ -178,6 +194,7 @@ try:
         log(f"Item Index: {item_index}")
     if is_zip:
         log("Zip mode enabled")
+    log(f"Output mode: {output_mode}")
 
     if platform == "youtube":
         log("Calling download_youtube()...")
@@ -190,6 +207,31 @@ try:
             extra_progress_hooks=[rich_progress_hook],
             extra_postprocessor_hooks=[postprocessor_hook]
         )
+
+        # ── Editor-compatible transcoding (YouTube only) ──
+        if result.get("success") and output_mode == "editor_compatible" and result.get("filename"):
+            filepath = os.path.join(folder, result["filename"])
+            if os.path.exists(filepath):
+                log(f"Editor-compatible mode: checking {result['filename']}")
+
+                def transcode_progress(stage):
+                    info = json.dumps({
+                        "speed": "\u2014", "eta": "\u2014",
+                        "downloaded": "\u2014", "total": "\u2014",
+                        "stage": stage,
+                        "item": result.get("title", "")
+                    })
+                    print(f"DLPROGRESS:{info}", flush=True)
+
+                tc_ok, tc_path, tc_err = safe_transcode_in_place(filepath, transcode_progress)
+                if tc_ok:
+                    result["filename"] = os.path.basename(tc_path)
+                    result["editor_compatible"] = True
+                    log(f"Transcode success: {result['filename']}")
+                else:
+                    log(f"Transcode failed (keeping original): {tc_err}")
+                    result["transcode_warning"] = tc_err
+                    result["editor_compatible"] = False
 
     elif platform == "spotify":
         log("Calling download_spotify()...")

@@ -13,11 +13,16 @@ const { autoUpdater } = require("electron-updater");
 const binariesDir = depManager.getBinariesDir();
 
 function resolveFfmpegDir() {
-    if (app.isPackaged) {
+    if (fs.existsSync(path.join(binariesDir, "ffmpeg.exe"))) {
+        return binariesDir;
+    }
+    try {
         const appDataDir = depManager.getAppDataBinariesDir();
         if (fs.existsSync(path.join(appDataDir, "ffmpeg.exe"))) {
             return appDataDir;
         }
+    } catch (e) {
+        console.error("[FFmpeg] AppData check failed:", e.message);
     }
     return binariesDir;
 }
@@ -121,6 +126,25 @@ function createWindow() {
 }
 
 // ═══════════════════════════════════════════════════════════
+// Backend Process Resolver (Python in dev, .exe in packaged)
+// ═══════════════════════════════════════════════════════════
+function getBackendInvocation(scriptName, args) {
+    const pyScript = path.join(__dirname, "..", "backend", `${scriptName}.py`);
+    if (!app.isPackaged && fs.existsSync(pyScript)) {
+        return {
+            command: "python",
+            args: [pyScript, ...args],
+            cwd: path.join(__dirname, "..", "backend"),
+        };
+    }
+    return {
+        command: path.join(binariesDir, `${scriptName}.exe`),
+        args: args,
+        cwd: binariesDir,
+    };
+}
+
+// ═══════════════════════════════════════════════════════════
 // IPC: fetch-video-info — Command-based backend call
 // ═══════════════════════════════════════════════════════════
 ipcMain.handle("fetch-video-info", async (event, url) => {
@@ -128,18 +152,16 @@ ipcMain.handle("fetch-video-info", async (event, url) => {
     console.log("[IPC] Received 'fetch-video-info' from renderer");
     console.log("[IPC] URL:", url);
 
-    const executablePath = path.join(binariesDir, "fetch_video_info.exe");
     const isPacked = app.isPackaged;
+    const invocation = getBackendInvocation("fetch_video_info", [url]);
 
     console.log("[IPC] Binaries directory:", binariesDir);
-    console.log("[IPC] Executable path:", executablePath);
-    console.log("[IPC] File exists:", fs.existsSync(executablePath));
     console.log("[IPC] Packaged mode:", isPacked);
-    console.log("[IPC] Spawning:", executablePath, url);
+    console.log("[IPC] Invoking:", invocation.command, invocation.args.join(" "));
 
     return new Promise((resolve) => {
-        const backendProcess = spawn(executablePath, [url], {
-            cwd: binariesDir,
+        const backendProcess = spawn(invocation.command, invocation.args, {
+            cwd: invocation.cwd,
             env: { ...process.env, DANY_FFMPEG_DIR: resolveFfmpegDir() },
             windowsHide: true
         });
@@ -212,30 +234,34 @@ ipcMain.handle("fetch-video-info", async (event, url) => {
 // ═══════════════════════════════════════════════════════════
 // IPC: download-video — Command-based backend download call
 // ═══════════════════════════════════════════════════════════
-ipcMain.handle("download-video", async (event, { url, formatId, taskId }) => {
+ipcMain.handle("download-video", async (event, { url, formatId, taskId, outputMode }) => {
     console.log("[IPC] ────────────────────────────────────────");
     console.log("[IPC] Received 'download-video' from renderer");
     console.log("[IPC] URL:", url);
     console.log("[IPC] Format:", formatId);
 
-    const executablePath = path.join(binariesDir, "download_video.exe");
     const isPacked = app.isPackaged;
     const platform = detectPlatform(url);
     const downloadFolder = getDownloadFolder(platform);
     if (!taskId) taskId = Date.now().toString();
 
     console.log("[IPC] Binaries directory:", binariesDir);
-    console.log("[IPC] Executable path:", executablePath);
-    console.log("[IPC] File exists:", fs.existsSync(executablePath));
     console.log("[IPC] Packaged mode:", isPacked);
     console.log("[IPC] Platform:", platform);
     console.log("[IPC] Download folder:", downloadFolder);
     console.log("[IPC] Task ID:", taskId);
-    console.log("[IPC] Spawning:", executablePath, url, downloadFolder, formatId, taskId);
+    console.log("[IPC] Output Mode:", outputMode || "original");
+
+    const args = [url, downloadFolder, formatId, taskId];
+    if (outputMode && outputMode !== "original") {
+        args.push(`--output-mode=${outputMode}`);
+    }
+    const invocation = getBackendInvocation("download_video", args);
+    console.log("[IPC] Invoking:", invocation.command, invocation.args.join(" "));
 
     return new Promise((resolve) => {
-        const backendProcess = spawn(executablePath, [url, downloadFolder, formatId, taskId], {
-            cwd: binariesDir,
+        const backendProcess = spawn(invocation.command, invocation.args, {
+            cwd: invocation.cwd,
             env: { ...process.env, DANY_FFMPEG_DIR: resolveFfmpegDir() },
             windowsHide: true
         });
@@ -357,16 +383,16 @@ ipcMain.handle("download-instagram-item", async (event, { url, itemIndex, taskId
     console.log("[IPC] URL:", url);
     console.log("[IPC] Item Index:", itemIndex);
 
-    const executablePath = path.join(binariesDir, "download_video.exe");
     const downloadFolder = getDownloadFolder("instagram");
     if (!taskId) taskId = "item_" + Date.now().toString();
 
     const args = [url, downloadFolder, "best", taskId, `--item-index=${itemIndex}`];
-    console.log("[IPC] Spawning:", executablePath, ...args);
+    const invocation = getBackendInvocation("download_video", args);
+    console.log("[IPC] Invoking:", invocation.command, invocation.args.join(" "));
 
     return new Promise((resolve) => {
-        const backendProcess = spawn(executablePath, args, {
-            cwd: binariesDir,
+        const backendProcess = spawn(invocation.command, invocation.args, {
+            cwd: invocation.cwd,
             env: { ...process.env, DANY_FFMPEG_DIR: resolveFfmpegDir() },
             windowsHide: true
         });
@@ -419,16 +445,16 @@ ipcMain.handle("download-instagram-zip", async (event, { url, taskId }) => {
     console.log("[IPC] Received 'download-instagram-zip'");
     console.log("[IPC] URL:", url);
 
-    const executablePath = path.join(binariesDir, "download_video.exe");
     const downloadFolder = getDownloadFolder("instagram");
     if (!taskId) taskId = "zip_" + Date.now().toString();
 
     const args = [url, downloadFolder, "best", taskId, "--zip"];
-    console.log("[IPC] Spawning:", executablePath, ...args);
+    const invocation = getBackendInvocation("download_video", args);
+    console.log("[IPC] Invoking:", invocation.command, invocation.args.join(" "));
 
     return new Promise((resolve) => {
-        const backendProcess = spawn(executablePath, args, {
-            cwd: binariesDir,
+        const backendProcess = spawn(invocation.command, invocation.args, {
+            cwd: invocation.cwd,
             env: { ...process.env, DANY_FFMPEG_DIR: resolveFfmpegDir() },
             windowsHide: true
         });

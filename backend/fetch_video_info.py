@@ -17,6 +17,18 @@ import sys
 import os
 import re
 
+# Reconfigure streams to UTF-8 to prevent charmap errors on Windows
+if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+if sys.stderr and hasattr(sys.stderr, "reconfigure"):
+    try:
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 # ═══════════════════════════════════════════════════════════
 # STEP 1: Capture REAL stdout, redirect all print() → stderr
 # ═══════════════════════════════════════════════════════════

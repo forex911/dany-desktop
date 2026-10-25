@@ -38,7 +38,7 @@ def get_cookie_path():
     if os.path.exists(render_cookie):
         try:
             shutil.copy(render_cookie, tmp_cookie)
-            print("[DEBUG] Copied Render cookie →", tmp_cookie)
+            print("[DEBUG] Copied Render cookie ->", tmp_cookie)
             return tmp_cookie
         except Exception as e:
             print("[DEBUG] Cookie copy failed:", e)
@@ -61,7 +61,9 @@ def base_opts(use_proxy=False):
         },
         "socket_timeout": 30,
         "concurrent_fragment_downloads": 1,
-        # Let yt-dlp 2026.8.19 use its intelligent default clients for avoiding 403s while retaining all formats
+        # Enable Node.js as a JavaScript runtime for YouTube n-parameter decryption.
+        # Without this, HTTPS format downloads fail with HTTP 403 Forbidden.
+        "js_runtimes": {"node": {}, "deno": {}},
     }
     
     # Optional Proxy Mode
@@ -71,9 +73,16 @@ def base_opts(use_proxy=False):
             opts["proxy"] = proxy
             
     # Use app-managed FFmpeg if available
-    ffmpeg_dir = os.environ.get("DANY_FFMPEG_DIR")
-    if ffmpeg_dir and os.path.isdir(ffmpeg_dir):
-        opts["ffmpeg_location"] = ffmpeg_dir
+    try:
+        from utils.transcoder import get_ffmpeg_path
+        ffmpeg_exe = get_ffmpeg_path()
+        if ffmpeg_exe:
+            opts["ffmpeg_location"] = ffmpeg_exe
+    except Exception:
+        ffmpeg_dir = os.environ.get("DANY_FFMPEG_DIR")
+        if ffmpeg_dir and os.path.isdir(ffmpeg_dir):
+            opts["ffmpeg_location"] = ffmpeg_dir
+
     return opts
 
 
@@ -81,15 +90,15 @@ def base_opts(use_proxy=False):
 # Extraction pipeline (Preview)
 # -----------------------------------
 def try_extract(url, force_web_only=False):
-    # Preview opts: NO format restriction — get ALL available formats
+    # Preview opts: NO format restriction -- get ALL available formats
     opts_base = base_opts(use_proxy=False)
     opts_base["skip_download"] = True
 
-    # ═══════════════════════════════════════════════════════════
+    # ===========================================================
     # STAGE 1: DIRECT (No cookies, no proxy)
-    # ═══════════════════════════════════════════════════════════
+    # ===========================================================
     if not force_web_only:
-        print("\n[YT-DLP] 🎬 Stage 1: DIRECT")
+        print("\n[YT-DLP] [STAGE] Stage 1: DIRECT")
         test_opts = opts_base.copy()
         if "cookiefile" in test_opts:
             del test_opts["cookiefile"]
@@ -98,16 +107,16 @@ def try_extract(url, force_web_only=False):
             with yt_dlp.YoutubeDL(test_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
             fmt_count = len(info.get("formats", []))
-            print(f"[YT-DLP] ✅ Stage 1 Success! Formats found: {fmt_count}")
+            print(f"[YT-DLP] [OK] Stage 1 Success! Formats found: {fmt_count}")
             return info, "direct", False, None
         except Exception as e:
-            print(f"[YT-DLP Error] ❌ Stage 1 Failed: {e}")
+            print(f"[YT-DLP Error] [ERROR] Stage 1 Failed: {e}")
 
-    # ═══════════════════════════════════════════════════════════
+    # ===========================================================
     # STAGE 2: COOKIE FALLBACK
     # Try browser cookies first, then file
-    # ═══════════════════════════════════════════════════════════
-    print("\n[YT-DLP] 🎬 Stage 2: COOKIE FALLBACK")
+    # ===========================================================
+    print("\n[YT-DLP] [STAGE] Stage 2: COOKIE FALLBACK")
     for browser in ["chrome", "edge", "firefox", "brave", "safari", "opera"]:
         try:
             test_opts = opts_base.copy()
@@ -115,10 +124,10 @@ def try_extract(url, force_web_only=False):
             with yt_dlp.YoutubeDL(test_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
             fmt_count = len(info.get("formats", []))
-            print(f"[YT-DLP] ✅ Stage 2 Success (Browser Cookies: {browser})! Formats found: {fmt_count}")
+            print(f"[YT-DLP] [OK] Stage 2 Success (Browser Cookies: {browser})! Formats found: {fmt_count}")
             return info, f"cookie_fallback_{browser}", True, None
         except Exception as e:
-            print(f"[YT-DLP Error] ❌ Stage 2 {browser} Cookies Failed: {e}")
+            print(f"[YT-DLP Error] [ERROR] Stage 2 {browser} Cookies Failed: {e}")
         
     cookie_path = get_cookie_path()
     if cookie_path:
@@ -131,47 +140,47 @@ def try_extract(url, force_web_only=False):
             with yt_dlp.YoutubeDL(test_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
             fmt_count = len(info.get("formats", []))
-            print(f"[YT-DLP] ✅ Stage 2 Success (File Cookies)! Formats found: {fmt_count}")
+            print(f"[YT-DLP] [OK] Stage 2 Success (File Cookies)! Formats found: {fmt_count}")
             return info, "cookie_fallback", True, None
         except Exception as e:
-            print(f"[YT-DLP Error] ❌ Stage 2 File Cookies Failed: {e}")
+            print(f"[YT-DLP Error] [ERROR] Stage 2 File Cookies Failed: {e}")
     else:
-        print("[YT-DLP Error] ⚠️ Stage 2 File Cookies Skipped: No cookie file")
+        print("[YT-DLP Error] [WARN] Stage 2 File Cookies Skipped: No cookie file")
 
     if force_web_only:
         raise Exception("Direct and Cookie extraction strategies failed.")
 
-    # ═══════════════════════════════════════════════════════════
+    # ===========================================================
     # STAGE 3: PROXY FALLBACK (Emergency only)
-    # ═══════════════════════════════════════════════════════════
-    print("\n[YT-DLP] 🎬 Stage 3: PROXY FALLBACK")
+    # ===========================================================
+    print("\n[YT-DLP] [STAGE] Stage 3: PROXY FALLBACK")
     for attempt in range(2):
         proxy = proxy_manager.get_random_proxy()
         if not proxy:
-            print("[YT-DLP Error] ⚠️ Stage 3 Skipped: No proxies available")
+            print("[YT-DLP Error] [WARN] Stage 3 Skipped: No proxies available")
             break
             
         test_opts = opts_base.copy()
         test_opts["proxy"] = proxy
         
-        print(f"[YT-DLP DEBUG] 🔄 Attempt {attempt+1}/2 proxy={proxy}")
+        print(f"[YT-DLP DEBUG] [RETRY] Attempt {attempt+1}/2 proxy={proxy}")
         try:
             with yt_dlp.YoutubeDL(test_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
             fmt_count = len(info.get("formats", []))
-            print(f"[YT-DLP] ✅ Stage 3 Success! Formats found: {fmt_count}")
+            print(f"[YT-DLP] [OK] Stage 3 Success! Formats found: {fmt_count}")
             return info, "proxy_fallback", False, proxy
         except Exception as e:
             err_msg = str(e).lower()
-            print(f"[YT-DLP Error] ❌ Stage 3 Failed: {e}")
+            print(f"[YT-DLP Error] [ERROR] Stage 3 Failed: {e}")
             if "429" in err_msg or "forbidden" in err_msg or "payment required" in err_msg:
                 proxy_manager.mark_failed(proxy, 300)
             time.sleep(random.uniform(2, 4))
 
-    # ═══════════════════════════════════════════════════════════
+    # ===========================================================
     # STAGE 4: ALTERNATE CLIENT FALLBACK (tv_embedded)
-    # ═══════════════════════════════════════════════════════════
-    print("\n[YT-DLP] 🎬 Stage 4: FALLBACK (tv_embedded client)")
+    # ===========================================================
+    print("\n[YT-DLP] [STAGE] Stage 4: FALLBACK (tv_embedded client)")
     try:
         test_opts = opts_base.copy()
         test_opts["extractor_args"] = {"youtube": {"player_client": ["tv_embedded"]}}
@@ -181,10 +190,10 @@ def try_extract(url, force_web_only=False):
         with yt_dlp.YoutubeDL(test_opts) as ydl:
             info = ydl.extract_info(url, download=False)
         fmt_count = len(info.get("formats", []))
-        print(f"[YT-DLP] ✅ Stage 4 Success! Formats found: {fmt_count}")
+        print(f"[YT-DLP] [OK] Stage 4 Success! Formats found: {fmt_count}")
         return info, "fallback", False, None
     except Exception as e:
-        print(f"[YT-DLP Error] ❌ Stage 4 Failed: {e}")
+        print(f"[YT-DLP Error] [ERROR] Stage 4 Failed: {e}")
 
     raise Exception("All 4 metadata extraction stages failed completely.")
 
@@ -197,10 +206,10 @@ def fetch_youtube_info(url):
         info, source, used_cookie, proxy_used = try_extract(url)
         formats = info.get("formats", [])
 
-        # ═══════════════════════════════════════════════════
+        # ===================================================
         # DEBUG: Raw format inventory
-        # ═══════════════════════════════════════════════════
-        print(f"\n[FORMAT DEBUG] ═══════════════════════════════════")
+        # ===================================================
+        print(f"\n[FORMAT DEBUG] ===================================")
         print(f"[FORMAT DEBUG] Source: {source} | Cookie: {used_cookie} | Proxy: {proxy_used}")
         print(f"[FORMAT DEBUG] Total raw formats: {len(formats)}")
 
@@ -238,24 +247,32 @@ def fetch_youtube_info(url):
         if not formats:
             return {"success": False, "error": "No formats found"}
 
-        # ═══════════════════════════════════════════════════
+        # ===================================================
         # Build format list with EXACT format IDs (137+140 style)
-        # ═══════════════════════════════════════════════════
+        # ===================================================
         all_heights_sorted = sorted(all_video_heights, reverse=True)
 
-        # Find best m4a audio format (prefer 140 for compatibility)
+        # Find best audio format: prefer format 140 (AAC m4a) for maximum compatibility
         best_audio = None
-        for af in sorted(audio_only, key=lambda x: x.get("filesize", 0) or x.get("filesize_approx", 0) or 0, reverse=True):
-            if af.get("ext") == "m4a" or (af.get("acodec", "").startswith("mp4a")):
+        # Priority 1: format 140 (standard AAC -- universally compatible with editors and players)
+        for af in audio_only:
+            if af.get("format_id") == "140":
                 best_audio = af
                 break
+        # Priority 2: any m4a/AAC format, largest first
+        if not best_audio:
+            for af in sorted(audio_only, key=lambda x: x.get("filesize", 0) or x.get("filesize_approx", 0) or 0, reverse=True):
+                if af.get("ext") == "m4a" or (af.get("acodec", "").startswith("mp4a")):
+                    best_audio = af
+                    break
+        # Priority 3: any audio format at all
         if not best_audio and audio_only:
             best_audio = audio_only[-1]
 
         best_audio_id = best_audio["format_id"] if best_audio else "140"
         print(f"[FORMAT DEBUG] Best audio: id={best_audio_id} ({best_audio.get('acodec', '?') if best_audio else 'fallback'})")
 
-        # Map: height → best video-only format (prefer mp4/h264, then any)
+        # Map: height -> best video-only format (prefer mp4/h264, then any)
         best_video_per_height = {}
         for vf in video_only:
             h = vf.get("height", 0)
@@ -271,7 +288,7 @@ def fetch_youtube_info(url):
                 if new_is_mp4 and not old_is_mp4:
                     best_video_per_height[h] = vf
                 elif new_is_mp4 == old_is_mp4:
-                    # Same type — prefer larger file (better quality)
+                    # Same type -- prefer larger file (better quality)
                     new_size = vf.get("filesize") or vf.get("filesize_approx") or 0
                     old_size = existing.get("filesize") or existing.get("filesize_approx") or 0
                     if new_size > old_size:
@@ -279,7 +296,7 @@ def fetch_youtube_info(url):
 
         format_list = []
 
-        # 1. Best Quality — generic fallback always first
+        # 1. Best Quality -- generic fallback always first
         format_list.append({
             "format_id": f"bv*+ba/b[ext=mp4]/best",
             "label": "Best Quality (Auto Merge)",
@@ -293,8 +310,17 @@ def fetch_youtube_info(url):
                 vf = best_video_per_height[h]
                 vid = vf["format_id"]
                 exact_id = f"{vid}+{best_audio_id}"
-                codec = vf.get("vcodec", "?")[:8]
-                label = f"{h}p"
+                # Map vcodec to a human-readable label for the format dropdown
+                vc_raw = vf.get("vcodec", "")
+                if vc_raw.startswith("avc") or vc_raw.startswith("h264"):
+                    codec_label = "H.264"
+                elif vc_raw.startswith("vp9") or vc_raw.startswith("vp09"):
+                    codec_label = "VP9"
+                elif vc_raw.startswith("av01"):
+                    codec_label = "AV1"
+                else:
+                    codec_label = vc_raw[:8]
+                label = f"{h}p \u00b7 {codec_label}"
                 if h >= 2160:
                     label += " (4K)"
                 elif h >= 1440:
@@ -312,7 +338,7 @@ def fetch_youtube_info(url):
                     "ext": "mp4",
                     "type": "video"
                 })
-                print(f"[FORMAT DEBUG] DASH tier: {label} → {exact_id} [{codec}]")
+                print(f"[FORMAT DEBUG] DASH tier: {label} -> {exact_id} [{codec_label}]")
 
         # 3. Progressive safe downloads (single-file, no merge)
         seen_prog = set()
@@ -341,7 +367,7 @@ def fetch_youtube_info(url):
 
         print(f"[FORMAT DEBUG] Final dropdown options: {len(format_list)}")
         for fl in format_list:
-            print(f"[FORMAT DEBUG]   → {fl['label']} ({fl['format_id'][:40]})")
+            print(f"[FORMAT DEBUG]   -> {fl['label']} ({fl['format_id'][:40]})")
 
         # Quality summary
         qualities = [f"{r}p" for r in all_heights_sorted]
@@ -412,7 +438,7 @@ def download_youtube(url, folder, progress_callback=None, format_id=None, task_i
     # Common download setup (No Proxy by Default)
     opts_base = base_opts(use_proxy=False)
     
-    # Build hooks list — internal + any extra from bridge
+    # Build hooks list -- internal + any extra from bridge
     hooks = [progress_hook]
     if extra_progress_hooks:
         hooks.extend(extra_progress_hooks)
@@ -434,7 +460,8 @@ def download_youtube(url, folder, progress_callback=None, format_id=None, task_i
     print(f"[DOWNLOAD] Format: {format_id}")
     print(f"[DOWNLOAD] Output folder: {folder}")
 
-    if format_id == "bestaudio/best":
+    is_audio_only = format_id and "bestaudio" in format_id
+    if is_audio_only:
         opts_base["postprocessors"] = [{
             "key": "FFmpegExtractAudio",
             "preferredcodec": "mp3",
@@ -445,7 +472,7 @@ def download_youtube(url, folder, progress_callback=None, format_id=None, task_i
 
     def try_download(opts, source_label, proxy=None, used_cookie=False):
         nonlocal last_error
-        print(f"\n[DOWNLOAD] ═══ {source_label} ═══")
+        print(f"\n[DOWNLOAD] === {source_label} ===")
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=True)
@@ -453,11 +480,11 @@ def download_youtube(url, folder, progress_callback=None, format_id=None, task_i
                     info = info["entries"][0]
 
                 filename = ydl.prepare_filename(info)
-                if format_id == "bestaudio/best":
+                if is_audio_only:
                     filename = os.path.splitext(filename)[0] + ".mp3"
 
             basename = os.path.basename(filename)
-            print(f"[DOWNLOAD] ✅ Success: {basename}")
+            print(f"[DOWNLOAD] [OK] Success: {basename}")
             return {
                 "status": "success",
                 "quality": format_id,
@@ -471,21 +498,21 @@ def download_youtube(url, folder, progress_callback=None, format_id=None, task_i
             }
         except Exception as e:
             last_error = str(e)
-            print(f"[DOWNLOAD] ❌ {source_label} failed: {e}")
+            print(f"[DOWNLOAD] [ERROR] {source_label} failed: {e}")
             return None
 
-    # ═══════════════════════════════════════════════════
+    # ===================================================
     # STAGE 1: DIRECT (No Cookies, No Proxy)
-    # ═══════════════════════════════════════════════════
+    # ===================================================
     opts_s1 = opts_base.copy()
     if "cookiefile" in opts_s1:
         del opts_s1["cookiefile"]
     res = try_download(opts_s1, "Stage 1: DIRECT")
     if res: return res
     
-    # ═══════════════════════════════════════════════════
+    # ===================================================
     # STAGE 2: COOKIE FALLBACK (Browser Chrome + File)
-    # ═══════════════════════════════════════════════════
+    # ===================================================
     for browser in ["chrome", "edge", "firefox", "brave", "safari", "opera"]:
         opts_s2_browser = opts_base.copy()
         if "cookiefile" in opts_s2_browser:
@@ -502,21 +529,21 @@ def download_youtube(url, folder, progress_callback=None, format_id=None, task_i
         res = try_download(opts_s2_file, "Stage 2: COOKIE FALLBACK (File)", used_cookie=True)
         if res: return res
     else:
-        print("[DOWNLOAD] ⚠️ Stage 2 (File): Skipped — No cookie file found")
+        print("[DOWNLOAD] [WARN] Stage 2 (File): Skipped -- No cookie file found")
     
-    # ═══════════════════════════════════════════════════
+    # ===================================================
     # STAGE 3: PROXY FALLBACK
-    # ═══════════════════════════════════════════════════
+    # ===================================================
     for attempt in range(2):
         proxy = proxy_manager.get_random_proxy()
         if not proxy:
-            print("[DOWNLOAD] ⚠️ Stage 3: PROXY FALLBACK Skipped — No proxies available")
+            print("[DOWNLOAD] [WARN] Stage 3: PROXY FALLBACK Skipped -- No proxies available")
             break
             
         opts_s3 = opts_base.copy()
         opts_s3["proxy"] = proxy
         
-        print(f"[DOWNLOAD] 🔄 Stage 3 Attempt {attempt+1}/2 proxy={proxy}")
+        print(f"[DOWNLOAD] [RETRY] Stage 3 Attempt {attempt+1}/2 proxy={proxy}")
         res = try_download(opts_s3, f"Stage 3: PROXY FALLBACK (Attempt {attempt+1})", proxy=proxy)
         if res: return res
         
@@ -526,15 +553,30 @@ def download_youtube(url, folder, progress_callback=None, format_id=None, task_i
             if "429" in err_msg or "forbidden" in err_msg or "payment required" in err_msg:
                 proxy_manager.mark_failed(proxy, 300)
 
-    # ═══════════════════════════════════════════════════════════
+    # ===========================================================
     # STAGE 4: ALTERNATE CLIENT FALLBACK (tv_embedded)
-    # ═══════════════════════════════════════════════════════════
+    # ===========================================================
     opts_s4 = opts_base.copy()
     opts_s4["extractor_args"] = {"youtube": {"player_client": ["tv_embedded"]}}
     if "cookiefile" in opts_s4:
         del opts_s4["cookiefile"]
     res = try_download(opts_s4, "Stage 4: FALLBACK (tv_embedded client)")
     if res: return res
+
+    # ===========================================================
+    # STAGE 5: HLS FORMAT FALLBACK (bypass HTTPS 403)
+    # When specific format IDs fail on HTTPS, fall back to a
+    # generic selector that lets yt-dlp pick any protocol
+    # (including m3u8_native which avoids n-parameter issues).
+    # ===========================================================
+    if last_error and ("403" in last_error.lower() or "forbidden" in last_error.lower()):
+        print("\n[DOWNLOAD] [FALLBACK] Stage 5: HLS FORMAT FALLBACK (bypass 403)")
+        opts_s5 = opts_base.copy()
+        opts_s5["format"] = "bv*+ba/b"
+        if "cookiefile" in opts_s5:
+            del opts_s5["cookiefile"]
+        res = try_download(opts_s5, "Stage 5: HLS FORMAT FALLBACK")
+        if res: return res
 
     # Classify the error type for the frontend
     error_type = "UNKNOWN_DOWNLOAD_ERROR"
